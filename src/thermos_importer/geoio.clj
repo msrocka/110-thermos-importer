@@ -3,6 +3,13 @@
             [digest])
   (:import [org.geotools.data FileDataStoreFinder DataUtilities]))
 
+(defn- kebab-case [class-name]
+  (.toLowerCase
+   (.replaceAll class-name "(.)([A-Z])" "$1-$2")))
+
+(defn- geometry-type [geometry]
+  (keyword (kebab-case (.getGeometryType geometry))))
+
 (defn- feature-iterator-seq
   "Make a feature iterator into a lazy sequence.
   Note that if you do not exhaust the sequence the iterator will not be closed.
@@ -19,16 +26,14 @@
   (let [geometry (.getDefaultGeometry feature)
         n (.getNumGeometries geometry)]
     (if (and (= n 1)
-             (#{:multi-point :multi-line-string :multi-polygon} (geometry-type geometry)))
+             (#{:multi-point :multi-line-string :multi-polygon}
+              (geometry-type geometry)))
       (.getGeometryN geometry 0)
       geometry)))
 
-(defn- kebab-case [class-name]
-  (.toLowerCase
-   (.replaceAll class-name "(.)([A-Z])" "$1-$2")))
 
-(defn- geometry-type [geometry]
-  (keyword (kebab-case (.getGeometryType geometry))))
+
+
 
 (defn- feature-attributes [feature]
   (into {}
@@ -36,10 +41,12 @@
           [(keyword (.getLocalPart (.getName p)))
            (.getValue p)])))
 
+(defn geometry->id [geometry]
+  (digest/md5 (.toText geometry)))
 
 (defn- feature->map [feature]
   (let [geometry (feature-geometry feature)
-        identity (digest/md5 (.toText geometry))
+        identity (geometry->id geometry)
         type (geometry-type geometry)
         other-fields (feature-attributes feature)]
 
