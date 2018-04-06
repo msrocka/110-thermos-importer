@@ -20,6 +20,8 @@
                             [org.geotools/gt-epsg-hsql "18.2"] ; Coordinate system definitions
                             [com.github.davidmoten/rtree "0.8.0.4"]
 
+                            [better-cond "1.0.1"]
+
                             [adzerk/boot-test "RELEASE" :scope "test"]])
 
 (task-options!
