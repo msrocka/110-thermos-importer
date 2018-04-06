@@ -12,9 +12,9 @@
            [com.vividsolutions.jts.algorithm RobustLineIntersector]
            ))
 
-(def SMALL_DISTANCE 0.0001)
+(def SMALL_DISTANCE 0.000001)
 (def NEARNESS 0.01) ;; degrees latlon
-(def NEIGHBOURS 4) ;; number of neighbours to consider
+(def NEIGHBOURS 6) ;; number of neighbours to consider
 ;; TODO we may later want to find all properly intersecting lines
 
 (defn feature->rect [feature]
@@ -25,7 +25,11 @@
 
 
 (defn index-remove! [index feature]
-  (swap! index #(.delete % feature (feature->rect feature))))
+  (let [size-before (.size @index)]
+    (swap! index #(.delete % feature (feature->rect feature) true))
+    (when (= size-before (.size @index))
+      (println "Unable to remove feature from index?")))
+  )
 
 (defn index-insert! [index feature]
   (swap! index #(.add % feature (feature->rect feature))))
@@ -110,37 +114,29 @@
                 split-point (.getCoordinate on-p)
 
                 connect-to-node
-                (cond
-                  (zero? split-position)
-                  (::start-node p)
+                (let [
+                      [p-start p-end] (split-at (inc split-position) path-coordinates)
 
-                  (>= (- (count path-coordinates) 1) split-position)
-                  (::end-node p)
+                      ;; convert coordinate chains to features:
+                      p-start (make-path p (concat p-start [split-point]))
+                      p-end (make-path p (concat [split-point] p-end))
 
-                  :elsewhere
-                  (let [
-                        [p-start p-end] (split-at split-position path-coordinates)
+                      ;; update start and end vertices of the two new paths
+                      new-node (make-node split-point)
+                      p-start (assoc p-start ::end-node new-node :type "start-half")
+                      p-end (assoc p-end ::start-node new-node :type "end-half")
+                      ]
+                  ;; we need to delete p from the path-index
+                  (index-remove! path-index p)
 
-                        ;; convert coordinate chains to features:
-                        p-start (make-path p (concat p-start [split-point]))
-                        p-end (make-path p (concat [split-point] p-end))
+                  ;; we need to add p-start and p-end to the path index
+                  (index-insert! path-index p-start)
+                  (index-insert! path-index p-end)
 
-                        ;; update start and end vertices of the two new paths
-                        new-node (make-node split-point)
-                        p-start (assoc p-start ::end-node new-node)
-                        p-end (assoc p-end ::start-node new-node)
-                        ]
-                    ;; we need to delete p from the path-index
-                    (index-remove! path-index p)
+                  ;; we need to add new-node to the node index
+                  (index-insert! node-index new-node)
 
-                    ;; we need to add p-start and p-end to the path index
-                    (index-insert! path-index p-start)
-                    (index-insert! path-index p-end)
-
-                    ;; we need to add new-node to the node index
-                    (index-insert! node-index new-node)
-
-                    new-node))
+                  new-node)
                 ]
 
             (if (> distance SMALL_DISTANCE)
@@ -189,7 +185,8 @@
 
         nearest-path
         ;; can reuse the distanceop here to save a tiny bit of time
-        (split-connect-path! nearest-path building op)
+        (split-connect-path! nearest-path building ;; op
+                             )
         ))
 
     ;; at this point the node and path indices contain the network

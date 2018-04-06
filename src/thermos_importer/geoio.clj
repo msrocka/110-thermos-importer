@@ -1,7 +1,14 @@
 (ns thermos-importer.geoio
   (:require [clojure.java.io :as io]
+            [clojure.string :as string]
             [digest])
-  (:import [org.geotools.data FileDataStoreFinder DataUtilities]))
+  (:import [org.geotools.data FileDataStoreFinder DataUtilities]
+           [org.geotools.geojson.feature FeatureJSON]
+           [org.geotools.geojson.geom GeometryJSON]
+           [org.geotools.data FileDataStoreFinder DataUtilities]
+           [org.geotools.data.collection ListFeatureCollection]
+           [org.geotools.feature.simple SimpleFeatureBuilder]
+           ))
 
 (defn- kebab-case [class-name]
   (.toLowerCase
@@ -78,5 +85,37 @@
 
 (defn save
   "Store some geospatial data into a form that we like."
-  [filename]
-  )
+  [data filename fields]
+
+  (let [geo-writer (FeatureJSON. (GeometryJSON. 8))
+
+        ;; we need a type descriptor for geotools to be happy:
+        type
+        (DataUtilities/createType
+         "Data" ;; I think this does nothing
+         ;; this does something; it is a descriptor for the column types, like:
+         ;; col1:string,col2:double,col3:LineString:srid=...
+         (string/join
+          ","
+          (for [[name {type :type}] fields]
+            (str name ":" type))))
+
+        ;; now we can build features using the type
+        feature-builder
+        (SimpleFeatureBuilder. type)
+
+        feature-collection
+        (ListFeatureCollection.
+         type
+         (for [datum data]
+           ;; TODO add details to builder here
+           ;; it seems that on buildfeature it resets
+           (do (doseq [[field-name {value-function :value}] fields]
+                 (.add feature-builder (value-function datum)))
+               (.buildFeature feature-builder nil))))
+        ]
+    (with-open [writer (io/writer filename)]
+      (.writeFeatureCollection
+       geo-writer
+       feature-collection
+       writer))))

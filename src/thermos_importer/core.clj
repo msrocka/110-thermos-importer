@@ -4,6 +4,7 @@
             [clojure.java.io :as io]
             [thermos-importer.geoio :as geoio]
             [thermos-importer.spatial :as spatial]
+            [clojure.string :as string]
             ))
 
 (defn node
@@ -35,13 +36,30 @@
 
 (def connected-data (spatial/add-connections buildings-data noded-roads))
 
-(let [[buildings _] connected-data]
+(let [[buildings paths] connected-data]
+  (geoio/save buildings "/home/hinton/temp/buildings.geojson"
+              {"id"
+               {:value ::geoio/id :type "String"}
+               "geometry"
+               {:value ::geoio/geometry :type "Polygon:srid=4326"}
+               "connector"
+               {:value #(string/join "," (::spatial/connects-to-node %)) :type "String"}
+               })
 
-  (doseq [b buildings]
-    (println (::geoio/id b) (::spatial/connects-to-node b))
-    )
+
+
+  (geoio/save paths "/home/hinton/temp/paths.geojson"
+              {"id"
+               {:value ::geoio/id :type "String"}
+               "geometry"
+               {:value ::geoio/geometry :type "LineString:srid=4326"}
+               "start"
+               {:value (comp ::geoio/id ::spatial/start-node) :type "String"}
+               "end"
+               {:value (comp ::geoio/id ::spatial/end-node) :type "String"}
+               "type"
+               {:value :type :type "String"}
+               })
   )
 
-(def road-index (spatial/features->index noded-roads))
-
-(def index-first (spatial/features->index [(first noded-roads)]))
+(println "done")
