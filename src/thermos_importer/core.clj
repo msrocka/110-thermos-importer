@@ -25,34 +25,48 @@
     (println "Subcommands: node buildings roads outputfile")))
 
 
-(def roads-path "/home/hinton/p/110-thermos/thermos-data/mapzen-imposm-extracts/alba-iulia/ex_YDUybxrn56x9Efj6qD4G5m1gP8CmW_osm_roads.shp")
+(def roads-path "/home/hinton/p/110-thermos/thermos-data/mapzen-imposm-extracts/jelgava_latvia.imposm-shapefiles/ex_FjNeineFVwDNEswTyLN1KbXVA5Jt7_osm_roads.shp")
 
-(def buildings-path "/home/hinton/p/110-thermos/thermos-data/mapzen-imposm-extracts/alba-iulia/ex_YDUybxrn56x9Efj6qD4G5m1gP8CmW_osm_buildings.shp")
+(def buildings-path "/home/hinton/p/110-thermos/thermos-data/mapzen-imposm-extracts/jelgava_latvia.imposm-shapefiles/ex_FjNeineFVwDNEswTyLN1KbXVA5Jt7_osm_buildings.shp")
 
-(def roads-data (geoio/load roads-path))
-(def buildings-data (geoio/load buildings-path))
+(let [{roads-data ::geoio/features
+       roads-crs ::geoio/crs}
+      (geoio/load roads-path)
 
-(def noded-roads (spatial/node-paths roads-data))
+      {buildings-data ::geoio/features
+       buildings-crs ::geoio/crs}
+      (geoio/load buildings-path)
 
-(def connected-data (spatial/add-connections buildings-data noded-roads))
+      _ (when (not= roads-crs buildings-crs)
+          (println "Warning: roads and buildings CRS differ"
+                   roads-crs buildings-crs))
 
-(let [[buildings paths] connected-data]
+      noded-roads (spatial/node-paths roads-data)
+
+      [buildings paths]
+      (spatial/add-connections buildings-data noded-roads)
+
+      crs->srid
+      (fn [crs]
+        (if (and crs (.startsWith crs "EPSG:"))
+          (string/replace crs "EPSG:" "srid=")
+          (do (println "Unknown authority" crs) "srid=4326")))
+      ]
+
   (geoio/save buildings "/home/hinton/temp/buildings.geojson"
               {"id"
                {:value ::geoio/id :type "String"}
                "geometry"
-               {:value ::geoio/geometry :type "Polygon:srid=4326"}
+               {:value ::geoio/geometry :type (format "Polygon:%s" (crs->srid buildings-crs))}
                "connector"
                {:value #(string/join "," (::spatial/connects-to-node %)) :type "String"}
                })
-
-
 
   (geoio/save paths "/home/hinton/temp/paths.geojson"
               {"id"
                {:value ::geoio/id :type "String"}
                "geometry"
-               {:value ::geoio/geometry :type "LineString:srid=4326"}
+               {:value ::geoio/geometry :type (format "LineString:%s" (crs->srid roads-crs))}
                "start"
                {:value (comp ::geoio/id ::spatial/start-node) :type "String"}
                "end"
@@ -60,6 +74,15 @@
                "type"
                {:value :type :type "String"}
                })
+
+  (println "Finished!")
   )
 
-(println "done")
+;; other stuff we need
+;; - add surface area from lidar
+;; - add height from lidar
+;; - add computed footprint
+;;   - add fake surface area / height where no lidar
+;; - add path lengths
+;;   - add path / service intersections?
+;; - add addresses (/ construct address table with related IDs)

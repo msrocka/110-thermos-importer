@@ -8,6 +8,7 @@
            [org.geotools.data FileDataStoreFinder DataUtilities]
            [org.geotools.data.collection ListFeatureCollection]
            [org.geotools.feature.simple SimpleFeatureBuilder]
+           [org.geotools.referencing CRS]
            ))
 
 (defn- kebab-case [class-name]
@@ -38,10 +39,6 @@
       (.getGeometryN geometry 0)
       geometry)))
 
-
-
-
-
 (defn- feature-attributes [feature]
   (into {}
         (for [p (.getProperties feature)]
@@ -56,7 +53,6 @@
         identity (geometry->id geometry)
         type (geometry-type geometry)
         other-fields (feature-attributes feature)]
-
     (merge other-fields {::geometry geometry ::type type ::id identity})))
 
 (defn load
@@ -70,18 +66,22 @@
   "
   [filename]
 
-  (let [store (FileDataStoreFinder/getDataStore (io/as-file filename))]
-    (try
-      (doall
-       (for [feature (->> store
-                          .getTypeNames
-                          first
-                          (.getFeatureSource store)
-                          .getFeatures
-                          .features
-                          feature-iterator-seq)]
-         (feature->map feature)))
-      (finally (.dispose store)))))
+  (let [store (FileDataStoreFinder/getDataStore (io/as-file filename))
+        feature-source (->> store .getTypeNames first (.getFeatureSource store))
+        crs (-> feature-source .getInfo .getCRS)
+        crs-id (CRS/lookupIdentifier crs true)
+
+        features (try
+                   (doall
+                    (for [feature (->> feature-source
+                                       .getFeatures
+                                       .features
+                                       feature-iterator-seq)]
+                      (feature->map feature)))
+                   (finally (.dispose store)))
+        ]
+    {::features features ::crs crs-id}
+    ))
 
 (defn save
   "Store some geospatial data into a form that we like."
