@@ -7,76 +7,75 @@
             [clojure.string :as string]
             ))
 
-(defn node
-  "Node the buildings & roads, emitting a geojson output file"
-  [buildings roads output]
+(defn- connect [roads-path buildings-path roads-out buildings-out]
+  (let [{roads-data ::geoio/features roads-crs ::geoio/crs}
+        (geoio/load roads-path)
 
-  (let [buildings (geoio/load buildings)
-        paths (geoio/load roads)
-        connections (spatial/add-connections buildings paths)
-        noding (spatial/node-paths (concat paths connections))
+        {buildings-data ::geoio/features buildings-crs ::geoio/crs}
+        (geoio/load buildings-path)
+
+        _ (when (not= roads-crs buildings-crs)
+            (println "Warning: roads and buildings CRS differ"
+                     roads-crs buildings-crs))
+
+        noded-roads (spatial/node-paths roads-data)
+
+        [buildings paths]
+        (spatial/add-connections buildings-data noded-roads)
+
+        crs->srid
+        (fn [crs]
+          (if (and crs (.startsWith crs "EPSG:"))
+            (string/replace crs "EPSG:" "srid=")
+            (do (println "Unknown authority" crs) "srid=4326")))
         ]
 
-    (geoio/save (concat buildings noding) output)))
+    (geoio/save buildings buildings-out
+                {"id"
+                 {:value ::geoio/id :type "String"}
+                 "geometry"
+                 {:value ::geoio/geometry :type (format "Polygon:%s" (crs->srid buildings-crs))}
+                 "connector"
+                 {:value #(string/join "," (::spatial/connects-to-node %)) :type "String"}
+                 })
+
+    (geoio/save paths roads-out
+                {"id"
+                 {:value ::geoio/id :type "String"}
+                 "geometry"
+                 {:value ::geoio/geometry :type (format "LineString:%s" (crs->srid roads-crs))}
+                 "start"
+                 {:value (comp ::geoio/id ::spatial/start-node) :type "String"}
+                 "end"
+                 {:value (comp ::geoio/id ::spatial/end-node) :type "String"}
+                 "type"
+                 {:value :type :type "String"}
+                 })
+
+    (println "Finished!")))
+
+(defn- dimension
+  "Given shapes in file-in, write them out to file-out but with length and area properties in m2 and m"
+  [file-in file-out]
+  (println "not impl")
+  )
+
+(defn- lidar
+  "Given shapes in SHAPES, and LIDAR data in VRT, stick height, surface and volume properties on shapes into SHAPES-OUT"
+  [shapes vrt shapes-out]
+  (println "not impl")
+  )
 
 (defn main- [command & args]
   (case command
-    "node" (apply node args)
-    (println "Subcommands: node buildings roads outputfile")))
+    "connect" (apply connect args)
+    "dimension" (apply dimension args)
+    "lidar" (apply lidar args)
 
-
-(def roads-path "/home/hinton/p/110-thermos/thermos-data/mapzen-imposm-extracts/jelgava_latvia.imposm-shapefiles/ex_FjNeineFVwDNEswTyLN1KbXVA5Jt7_osm_roads.shp")
-
-(def buildings-path "/home/hinton/p/110-thermos/thermos-data/mapzen-imposm-extracts/jelgava_latvia.imposm-shapefiles/ex_FjNeineFVwDNEswTyLN1KbXVA5Jt7_osm_buildings.shp")
-
-(let [{roads-data ::geoio/features
-       roads-crs ::geoio/crs}
-      (geoio/load roads-path)
-
-      {buildings-data ::geoio/features
-       buildings-crs ::geoio/crs}
-      (geoio/load buildings-path)
-
-      _ (when (not= roads-crs buildings-crs)
-          (println "Warning: roads and buildings CRS differ"
-                   roads-crs buildings-crs))
-
-      noded-roads (spatial/node-paths roads-data)
-
-      [buildings paths]
-      (spatial/add-connections buildings-data noded-roads)
-
-      crs->srid
-      (fn [crs]
-        (if (and crs (.startsWith crs "EPSG:"))
-          (string/replace crs "EPSG:" "srid=")
-          (do (println "Unknown authority" crs) "srid=4326")))
-      ]
-
-  (geoio/save buildings "/home/hinton/temp/buildings.geojson"
-              {"id"
-               {:value ::geoio/id :type "String"}
-               "geometry"
-               {:value ::geoio/geometry :type (format "Polygon:%s" (crs->srid buildings-crs))}
-               "connector"
-               {:value #(string/join "," (::spatial/connects-to-node %)) :type "String"}
-               })
-
-  (geoio/save paths "/home/hinton/temp/paths.geojson"
-              {"id"
-               {:value ::geoio/id :type "String"}
-               "geometry"
-               {:value ::geoio/geometry :type (format "LineString:%s" (crs->srid roads-crs))}
-               "start"
-               {:value (comp ::geoio/id ::spatial/start-node) :type "String"}
-               "end"
-               {:value (comp ::geoio/id ::spatial/end-node) :type "String"}
-               "type"
-               {:value :type :type "String"}
-               })
-
-  (println "Finished!")
-  )
+    (println
+"Usage:: <command> connect roads buildings roads-out buildings-out
+                   dimension file file-out
+                   lidar shapes vrt out")))
 
 ;; other stuff we need
 ;; - add surface area from lidar

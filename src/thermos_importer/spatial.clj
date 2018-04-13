@@ -155,7 +155,14 @@
               ;; otherwise we just need to connect the building:
               (swap! building-nodes update (::geoio/id b) conj (::geoio/id connect-to-node))
               )))
+
+        building-count
+        (count buildings)
+
+        buildings-done
+        (atom 0)
         ]
+    (println "Processing buildings")
     (doseq [building buildings]
       (cond
         ;; step 1: find any intersecting nodes and connect to those
@@ -185,9 +192,11 @@
 
         nearest-path
         ;; can reuse the distanceop here to save a tiny bit of time
-        (split-connect-path! nearest-path building ;; op
-                             )
-        ))
+        (split-connect-path! nearest-path building op))
+
+      (swap! buildings-done inc)
+      (when (zero? (mod @buildings-done 1000))
+        (println @buildings-done "/" building-count)))
 
     ;; at this point the node and path indices contain the network
     ;; structure and the building-nodes map contains the connection
