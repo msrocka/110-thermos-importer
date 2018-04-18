@@ -5,6 +5,7 @@
             [thermos-importer.geoio :as geoio]
             [thermos-importer.spatial :as spatial]
             [clojure.string :as string]
+            [clojure.pprint :refer [pprint]]
             ))
 
 (defn- connect [roads-path buildings-path roads-out buildings-out]
@@ -29,6 +30,16 @@
             (string/replace crs "EPSG:" "srid=")
             (do (println "Unknown authority" crs) "srid=4326")))
         ]
+
+    (let [dodgy-paths (filter #(> (count (second %)) 1)
+                              (group-by ::geoio/id paths))]
+      (when (not-empty dodgy-paths)
+        (println (count dodgy-paths) "paths are duplicated:")
+        (doseq [[id paths] dodgy-paths]
+          (println id)
+          (doseq [p paths]
+            (pprint p))
+          )))
 
     (geoio/save buildings buildings-out
                 {"id"

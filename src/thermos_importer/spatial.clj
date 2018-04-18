@@ -114,29 +114,40 @@
                 split-point (.getCoordinate on-p)
 
                 connect-to-node
-                (let [
-                      [p-start p-end] (split-at (inc split-position) path-coordinates)
+                (cond
+                  (and (zero? split-position)
+                       (= split-point (first path-coordinates)))
+                  (::start-node p)
 
-                      ;; convert coordinate chains to features:
-                      p-start (make-path p (concat p-start [split-point]))
-                      p-end (make-path p (concat [split-point] p-end))
+                  (and (= split-position (- (count path-coordinates) 2))
+                       (= split-point (last path-coordinates)))
+                  (::end-node p)
 
-                      ;; update start and end vertices of the two new paths
-                      new-node (make-node split-point)
-                      p-start (assoc p-start ::end-node new-node :type "start-half")
-                      p-end (assoc p-end ::start-node new-node :type "end-half")
-                      ]
-                  ;; we need to delete p from the path-index
-                  (index-remove! path-index p)
+                  :otherwise
+                  (let [
+                        [p-start p-end] (split-at (inc split-position) path-coordinates)
 
-                  ;; we need to add p-start and p-end to the path index
-                  (index-insert! path-index p-start)
-                  (index-insert! path-index p-end)
+                        ;; convert coordinate chains to features:
+                        p-start (make-path p (concat p-start [split-point]))
+                        p-end (make-path p (concat [split-point] p-end))
 
-                  ;; we need to add new-node to the node index
-                  (index-insert! node-index new-node)
+                        ;; update start and end vertices of the two new paths
+                        new-node (make-node split-point)
+                        p-start (assoc p-start ::end-node new-node :type "start-half")
+                        p-end (assoc p-end ::start-node new-node :type "end-half")
+                        ]
+                    ;; we need to delete p from the path-index
+                    (index-remove! path-index p)
 
-                  new-node)
+                    ;; we need to add p-start and p-end to the path index
+                    (index-insert! path-index p-start)
+                    (index-insert! path-index p-end)
+
+                    ;; we need to add new-node to the node index
+                    (index-insert! node-index new-node)
+
+                    new-node)
+                  )
                 ]
 
             (if (> distance SMALL_DISTANCE)
