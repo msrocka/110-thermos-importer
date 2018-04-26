@@ -10,10 +10,14 @@
            [com.vividsolutions.jts.noding
             MCIndexNoder NodedSegmentString IntersectionAdder]
            [com.vividsolutions.jts.algorithm RobustLineIntersector]
+
+           [org.geotools.geometry.jts JTS]
+           [org.geotools.referencing CRS]
+           [org.geotools.geometry Envelope2D]
            ))
 
-(def SMALL_DISTANCE 0.000001)
-(def NEARNESS 0.01) ;; degrees latlon
+(def SMALL_DISTANCE 0.1)
+(def NEARNESS 500) ;; metres, since we go into our equal-area projection
 (def NEIGHBOURS 6) ;; number of neighbours to consider
 ;; TODO we may later want to find all properly intersecting lines
 
@@ -23,13 +27,11 @@
      (.getMinX bbox) (.getMinY bbox)
      (.getMaxX bbox) (.getMaxY bbox))))
 
-
 (defn index-remove! [index feature]
   (let [size-before (.size @index)]
     (swap! index #(.delete % feature (feature->rect feature) true))
     (when (= size-before (.size @index))
-      (println "Unable to remove feature from index?")))
-  )
+      (println "Unable to remove feature from index?"))))
 
 (defn index-insert! [index feature]
   (swap! index #(.add % feature (feature->rect feature))))
@@ -69,10 +71,75 @@
        (feature-overlaps index) ;; find things which could intersect
        (filter (partial features-intersect? feature)))) ;; restrict to things which do
 
+(defn- create-lcc
+  "Create a Lambert Conformal Confic projection centred on the bounding
+  box of the given set of features, which should be in a lat-lon
+  projection, probably 4326."
+  [input-crs features]
+  (let [input-crs (CRS/decode input-crs)
+        bounding-box
+        (reduce (fn [box feat]
+                  (.include box (JTS/getEnvelope2D
+                                 (.getEnvelopeInternal (::geoio/geometry feat))
+                                 input-crs))
+                  box)
+                (Envelope2D.)
+                features)
+
+        ;; this is lambert conformal conic, maybe albers equal area
+        ;; would be better? The lines are still squiffy in this, no
+        ;; idea why.  Maybe I need to make some test data with 1 road
+        ;; and 1 building in it.
+        
+        parallel-1 (.getMinimum bounding-box 1)
+        parallel-2 (.getMaximum bounding-box 1)
+        latitude-origin (.getMedian bounding-box 1)
+        longitude-origin (.getMedian bounding-box 0)
+        wkt (format "PROJCS[\"Lambert_Conformal_Conic\",
+    GEOGCS[\"GCS_European_1950\",
+        DATUM[\"European_Datum_1950\",
+            SPHEROID[\"International_1924\",6378388,297]],
+        PRIMEM[\"Greenwich\",0],
+        UNIT[\"Degree\",0.017453292519943295]],
+    PROJECTION[\"Albers_Conic_Equal_area\"],
+    PARAMETER[\"False_Easting\",0],
+    PARAMETER[\"False_Northing\",0],
+    PARAMETER[\"longitude_of_center\",%f],
+    PARAMETER[\"Standard_Parallel_1\",%f],
+    PARAMETER[\"Standard_Parallel_2\",%f],
+    PARAMETER[\"latitude_of_center\",%f],
+    UNIT[\"Meter\",1]]"
+                    longitude-origin
+                    parallel-1
+                    parallel-2
+                    latitude-origin
+                    )
+        ]
+    (println "Reproject to" wkt)
+    (CRS/findMathTransform input-crs (CRS/parseWKT wkt) true)))
+
+;; it seems like this does reproject into metres, but it doesn't make
+;; the connectors look perpendicular?
+(defn- reproject [features transform]
+  (map
+   (fn [feature]
+     (let [g (::geoio/geometry feature)
+           g2 (JTS/transform g transform)
+           id2 (geoio/geometry->id g2)]
+       (assoc feature
+              ::geoio/id id2
+              ::geoio/geometry g2)
+       ))
+   features))
+
 (defn add-connections
-  [buildings noded-paths]
+  [crs buildings noded-paths]
   (println "Connect" (count buildings) "with" (count noded-paths))
-  (let [building-nodes (atom {}) ;; maps building IDs to node IDs
+  (let [transform (create-lcc crs buildings)
+        buildings (reproject buildings transform)
+        noded-paths (reproject noded-paths transform)
+
+        building-nodes (atom {}) ;; maps building IDs to node IDs
                                  ;; where they connect
 
         _ (println "Creating path index")
@@ -133,8 +200,8 @@
 
                         ;; update start and end vertices of the two new paths
                         new-node (make-node split-point)
-                        p-start (assoc p-start ::end-node new-node :type "start-half")
-                        p-end (assoc p-end ::start-node new-node :type "end-half")
+                        p-start (assoc p-start ::end-node new-node ::split-type "start-half")
+                        p-end (assoc p-end ::start-node new-node ::split-type "end-half")
                         ]
                     ;; we need to delete p from the path-index
                     (index-remove! path-index p)
@@ -217,7 +284,13 @@
           building-nodes @building-nodes
           buildings (map
                      #(assoc % ::connects-to-node (building-nodes (::geoio/id %)))
-                     buildings)]
+                     buildings)
+
+          ;; finally put it back into our input CRS
+          inverse-transform (.inverse transform)
+          buildings (reproject buildings inverse-transform)
+          paths (reproject paths inverse-transform)
+          ]
       [buildings paths])))
 
 (defn feature->segment-string

@@ -22,9 +22,10 @@
         noded-roads (spatial/node-paths roads-data)
 
         [buildings paths]
-        (spatial/add-connections buildings-data noded-roads)
+        (spatial/add-connections buildings-crs buildings-data noded-roads)
 
         crs->srid
+
         (fn [crs]
           (if (and crs (.startsWith crs "EPSG:"))
             (string/replace crs "EPSG:" "srid=")
@@ -38,29 +39,35 @@
         (doseq [[id paths] dodgy-paths]
           (println id)
           (doseq [p paths]
-            (pprint p))
+            (pprint (dissoc p ::geoio/geometry)))
           )))
 
     (geoio/save buildings buildings-out
-                {"id"
-                 {:value ::geoio/id :type "String"}
+                {"id" {:value ::geoio/id :type "String"}
+                 "name" {:value :name :type "String"}
+                 "type" {:value (constantly "demand") :type "String"}
+                 "subtype" {:value :type :type "String"}
+
                  "geometry"
                  {:value ::geoio/geometry :type (format "Polygon:%s" (crs->srid buildings-crs))}
-                 "connector"
+                 "connection_id"
                  {:value #(string/join "," (::spatial/connects-to-node %)) :type "String"}
+
                  })
 
     (geoio/save paths roads-out
-                {"id"
-                 {:value ::geoio/id :type "String"}
+                {"id" {:value ::geoio/id :type "String"}
+                 "name" {:value :name :type "String"}
+                 "type" {:value (constantly "path") :type "String"}
+                 "subtype" {:value :type :type "String"}
+
                  "geometry"
                  {:value ::geoio/geometry :type (format "LineString:%s" (crs->srid roads-crs))}
-                 "start"
+                 "start_id"
                  {:value (comp ::geoio/id ::spatial/start-node) :type "String"}
-                 "end"
+                 "end_id"
                  {:value (comp ::geoio/id ::spatial/end-node) :type "String"}
-                 "type"
-                 {:value :type :type "String"}
+
                  })
 
     (println "Finished!")))
@@ -96,3 +103,17 @@
 ;; - add path lengths
 ;;   - add path / service intersections?
 ;; - add addresses (/ construct address table with related IDs)
+
+(when false
+  (defn gen [name] (connect (format "../good-bits/%s-roads.shp" name) (format  "../good-bits/%s-buildings.shp" name) (format  "../gen/%s-ways.geojson" name) (format  "../gen/%s-buildings.geojson" name)))
+
+  (for [fi ["alba-iulia_romania"
+            "granollers_spain"
+            "jelgava_latvia"
+            "lisbon_portugal"
+            "warsaw_poland"
+            "berlin_germany"
+            "london_england"]]
+    (do (println fi)
+        (gen fi)))
+  )

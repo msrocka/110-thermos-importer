@@ -2,14 +2,14 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as string]
             [digest])
-  (:import [org.geotools.data FileDataStoreFinder DataUtilities]
-           [org.geotools.geojson.feature FeatureJSON]
+  (:import [org.geotools.geojson.feature FeatureJSON]
            [org.geotools.geojson.geom GeometryJSON]
            [org.geotools.data FileDataStoreFinder DataUtilities]
            [org.geotools.data.collection ListFeatureCollection]
            [org.geotools.feature.simple SimpleFeatureBuilder]
            [org.geotools.referencing CRS]
-           ))
+           [org.geotools.data.shapefile ShapefileDataStore]
+           [java.nio.charset StandardCharsets]))
 
 (defn- kebab-case [class-name]
   (.toLowerCase
@@ -67,6 +67,9 @@
   [filename]
 
   (let [store (FileDataStoreFinder/getDataStore (io/as-file filename))
+
+        _ (.setCharset store (StandardCharsets/UTF_8))
+
         feature-source (->> store .getTypeNames first (.getFeatureSource store))
         crs (-> feature-source .getInfo .getCRS)
         crs-id (CRS/lookupIdentifier crs true)
