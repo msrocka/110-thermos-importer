@@ -84,7 +84,7 @@
   (println "not impl")
   )
 
-(defn main- [command & args]
+(defn -main [command & args]
   (case command
     "connect" (apply connect args)
     "dimension" (apply dimension args)
@@ -104,16 +104,17 @@
 ;;   - add path / service intersections?
 ;; - add addresses (/ construct address table with related IDs)
 
-(when false
-  (defn gen [name] (connect (format "../good-bits/%s-roads.shp" name) (format  "../good-bits/%s-buildings.shp" name) (format  "../gen/%s-ways.geojson" name) (format  "../gen/%s-buildings.geojson" name)))
+;; (when false
+;;   (defn gen [name] (connect (format "../good-bits/%s-roads.shp" name) (format  "../good-bits/%s-buildings.shp" name) (format  "../gen/%s-ways.geojson" name) (format  "../gen/%s-buildings.geojson" name)))
 
-  (for [fi ["alba-iulia_romania"
-            "granollers_spain"
-            "jelgava_latvia"
-            "lisbon_portugal"
-            "warsaw_poland"
-            "berlin_germany"
-            "london_england"]]
-    (do (println fi)
-        (gen fi)))
-  )
+;;   (for [fi ["alba-iulia_romania"
+;;             "granollers_spain"
+;;             "jelgava_latvia"
+;;             "lisbon_portugal"
+;;             "warsaw_poland"
+;;             "berlin_germany"
+;;             "london_england"]]
+;;     (do (println fi)
+;;         (gen fi)))
+;;   )
+

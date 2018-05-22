@@ -19,7 +19,6 @@
 (def SMALL_DISTANCE 0.1)
 (def NEARNESS 500) ;; metres, since we go into our equal-area projection
 (def NEIGHBOURS 6) ;; number of neighbours to consider
-;; TODO we may later want to find all properly intersecting lines
 
 (defn feature->rect [feature]
   (let [bbox (.getEnvelopeInternal (::geoio/geometry feature))]
