@@ -278,12 +278,22 @@
     ;; at this point the node and path indices contain the network
     ;; structure and the building-nodes map contains the connection
     ;; from each building to a path. We want to output some new
-    ;; information which is the revised set of paths and buildings.
+    ;; information which is the revised set of paths and buildings. we
+    ;; also stick on the length and area while we're here as we're in
+    ;; the right coordinate system
     (let [paths (index->features path-index)
+
+          add-length #(assoc % ::length (.getLength (::geoio/geometry %)))
+          
+          paths (map add-length paths)
+          
           building-nodes @building-nodes
           buildings (map
                      #(assoc % ::connects-to-node (building-nodes (::geoio/id %)))
                      buildings)
+
+          add-area #(assoc % ::area (.getArea (::geoio/geometry %)))
+          buildings (map add-area buildings)
 
           ;; finally put it back into our input CRS
           inverse-transform (.inverse transform)

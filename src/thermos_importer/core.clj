@@ -6,12 +6,53 @@
             [thermos-importer.spatial :as spatial]
             [clojure.string :as string]
             [clojure.pprint :refer [pprint]]
+            [data.csv :as csv]
             ))
 
-(defn- connect [roads-path buildings-path roads-out buildings-out]
+(defn- add-road-costs [roads-data road-costs]
+  (keep
+   (fn [{type :type
+         class :class
+         :as road}]
+     (when-let [stuff (road-costs [type class])]
+       (let [[new-class road-cost] stuff]
+         (assoc road
+                :unit-cost road-cost
+                :subtype new-class))))
+   roads-data))
+
+(defn- parse-number
+  "Reads a number from a string. Returns nil if not a number."
+  [s]
+  (if (re-find #"^-?\d+\.?\d*([Ee]\+\d+|[Ee]-\d+|[Ee]\d+)?$" (.trim s))
+    (read-string s)))
+
+(defn- connect [road-costs roads-path buildings-path roads-out buildings-out]
   (let [{roads-data ::geoio/features roads-crs ::geoio/crs}
         (geoio/load roads-path)
 
+        ;; we need to preprocess the cost features onto the roads,
+        ;; and delete roads which have infini-cost
+        road-costs (with-open [reader (io/reader road-costs)]
+                     (let [rows (csv/read-csv reader)
+                           header (repeat (map keyword (first rows)))
+                           data (rest rows)]
+                       (doall (map zipmap header data))))
+
+        ;; now we need to transform road-costs to be something we can
+        ;; join to
+        (->> road-costs
+             (keep (fn [{type :osm.type
+                         class :osm.class
+                         subtype :classification
+                         unit-cost :cse.cost.per.metre}]
+                     (when-let [unit-cost (parse-number unit-cost)]
+                       (when (and type class subtype)
+                         [[type class] [subtype unit-cost]]))))
+             (into {}))
+        
+        roads-data (add-road-costs roads-data road-costs)
+        
         {buildings-data ::geoio/features buildings-crs ::geoio/crs}
         (geoio/load buildings-path)
 
@@ -43,10 +84,15 @@
           )))
 
     (geoio/save buildings buildings-out
-                {"id" {:value ::geoio/id :type "String"}
+                {"id"   {:value ::geoio/id :type "String"}
+                 "orig_id" {:value :osm_id :type "String"}
+                 
                  "name" {:value :name :type "String"}
                  "type" {:value (constantly "demand") :type "String"}
                  "subtype" {:value :type :type "String"}
+                 
+                 "area" {:value :area :type "Double"}
+                 "demand" {:value :kwh_annual :type "Double"}
 
                  "geometry"
                  {:value ::geoio/geometry :type (format "Polygon:%s" (crs->srid buildings-crs))}
@@ -57,9 +103,14 @@
 
     (geoio/save paths roads-out
                 {"id" {:value ::geoio/id :type "String"}
+                 "orig_id" {:value :osm_id :type "String"}
+                 
                  "name" {:value :name :type "String"}
                  "type" {:value (constantly "path") :type "String"}
-                 "subtype" {:value :type :type "String"}
+                 "subtype" {:value :subtype :type "String"}
+                 
+                 "length" {:value ::spatial/length :type "Double"}
+                 "cost" {:value #(* (::spatial/length %) (:unit-cost %)) :type "Double"}
 
                  "geometry"
                  {:value ::geoio/geometry :type (format "LineString:%s" (crs->srid roads-crs))}
@@ -91,7 +142,7 @@
     "lidar" (apply lidar args)
 
     (println
-"Usage:: <command> connect roads buildings roads-out buildings-out
+"Usage:: <command> connect costs roads buildings roads-out buildings-out
                    dimension file file-out
                    lidar shapes vrt out")))
 
