@@ -6,11 +6,21 @@ That has a main method in https://github.com/cse-bristol/110-thermos-importer/bl
 
 Things you can do at the moment will be like
 
-java -jar WHEREVER.jar connect some-road-data.shp some-building-data.shp road-bits.json buildings-with-data.json
+java -jar WHEREVER.jar connect some-road-costs.csv some-road-data.shp some-building-data.shp road-bits.json buildings-with-data.json
+
+The road costs data should be in CSV in a table like this:
+
+| osm.type | osm.class | classification | cse.cost.per.metre |
+|----------+-----------+----------------+--------------------|
+| blah     | blah      | blah           | 1                  |
+
+This gets joined to the set of paths that are constructed in some silly way.
+There is a default cost of 1000 which is applied near the end where the "cost" field of the output is defined.
 
 Roads and buildings might need to be in 4326, certainly need to be the same?
 
 Around
+
 https://github.com/cse-bristol/110-thermos-importer/blob/93ef5399262a7c604fbf0246b7792e7d9deabb48/src/thermos_importer/core.clj#L45
 
 is the stuff about which fields from the input shapefile go into the output geojson.
