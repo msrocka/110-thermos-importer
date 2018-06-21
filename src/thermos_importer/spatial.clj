@@ -220,7 +220,7 @@
               ;; we need a connecting line!
               (let [new-end-node (make-node (.getCoordinate on-b))
                     connector (make-path {::start-node connect-to-node ::end-node new-end-node
-                                          :type "Connector"}
+                                          :subtype "Connector"}
                                          [split-point (.getCoordinate on-b)])]
                 ;; we need to add the connector to the path index
                 (index-insert! path-index connector)

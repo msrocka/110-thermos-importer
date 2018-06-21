@@ -6,7 +6,7 @@
             [thermos-importer.spatial :as spatial]
             [clojure.string :as string]
             [clojure.pprint :refer [pprint]]
-            [data.csv :as csv]
+            [clojure.data.csv :as csv]
             ))
 
 (defn- add-road-costs [roads-data road-costs]
@@ -33,15 +33,16 @@
 
         ;; we need to preprocess the cost features onto the roads,
         ;; and delete roads which have infini-cost
-        road-costs (with-open [reader (io/reader road-costs)]
+        road-costs
+        (->> (with-open [reader (io/reader road-costs)]
                      (let [rows (csv/read-csv reader)
                            header (repeat (map keyword (first rows)))
                            data (rest rows)]
                        (doall (map zipmap header data))))
 
-        ;; now we need to transform road-costs to be something we can
-        ;; join to
-        (->> road-costs
+             ;; now we need to transform road-costs to be something we can
+             ;; join to
+
              (keep (fn [{type :osm.type
                          class :osm.class
                          subtype :classification
@@ -50,8 +51,14 @@
                        (when (and type class subtype)
                          [[type class] [subtype unit-cost]]))))
              (into {}))
+
+        _ (println "costs:" road-costs)
+
+        _ (println "road count before:" (count roads-data))
         
         roads-data (add-road-costs roads-data road-costs)
+
+        _ (println "road count after:" (count roads-data))
         
         {buildings-data ::geoio/features buildings-crs ::geoio/crs}
         (geoio/load buildings-path)
@@ -84,12 +91,20 @@
           )))
 
     (geoio/save buildings buildings-out
+                ;; this map says
+                ;; output field name -> {:value (function to get value) :type "string for type of field"}
+                
                 {"id"   {:value ::geoio/id :type "String"}
                  "orig_id" {:value :osm_id :type "String"}
                  
                  "name" {:value :name :type "String"}
                  "type" {:value (constantly "demand") :type "String"}
-                 "subtype" {:value :type :type "String"}
+                 "subtype" {:value
+                            (fn [x]
+                              (if (= "yes" (:type x))
+                                "Unclassified"
+                                (:type x)))
+                             :type "String"}
                  
                  "area" {:value :area :type "Double"}
                  "demand" {:value :kwh_annual :type "Double"}
@@ -110,7 +125,9 @@
                  "subtype" {:value :subtype :type "String"}
                  
                  "length" {:value ::spatial/length :type "Double"}
-                 "cost" {:value #(* (::spatial/length %) (:unit-cost %)) :type "Double"}
+                 "cost" {:value #(let [len (::spatial/length %)
+                                       cost (or (:unit-cost %) 1000)] ;; unit cost is missing for connection type
+                                   (* len cost)) :type "Double"}
 
                  "geometry"
                  {:value ::geoio/geometry :type (format "LineString:%s" (crs->srid roads-crs))}
@@ -123,12 +140,6 @@
 
     (println "Finished!")))
 
-(defn- dimension
-  "Given shapes in file-in, write them out to file-out but with length and area properties in m2 and m"
-  [file-in file-out]
-  (println "not impl")
-  )
-
 (defn- lidar
   "Given shapes in SHAPES, and LIDAR data in VRT, stick height, surface and volume properties on shapes into SHAPES-OUT"
   [shapes vrt shapes-out]
@@ -138,7 +149,6 @@
 (defn -main [command & args]
   (case command
     "connect" (apply connect args)
-    "dimension" (apply dimension args)
     "lidar" (apply lidar args)
 
     (println
