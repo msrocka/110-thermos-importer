@@ -20,6 +20,7 @@
                             [org.geotools/gt-epsg-hsql "18.2"] ; Coordinate system definitions
                             [com.github.davidmoten/rtree "0.8.0.4"]
                             [org.clojure/data.csv "0.1.4"]
+                            [http-kit                  "2.2.0"]
                             
                             [better-cond "1.0.1"]
 

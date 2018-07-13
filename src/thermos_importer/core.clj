@@ -4,10 +4,16 @@
             [clojure.java.io :as io]
             [thermos-importer.geoio :as geoio]
             [thermos-importer.spatial :as spatial]
+            [thermos-importer.overpass :as overpass]
             [clojure.string :as string]
             [clojure.pprint :refer [pprint]]
             [clojure.data.csv :as csv]
             ))
+
+(defn crs->srid [crs]
+  (if (and crs (.startsWith crs "EPSG:"))
+    (string/replace crs "EPSG:" "srid=")
+    (do (println "Unknown authority" crs) "srid=4326")))
 
 (defn- add-road-costs [roads-data road-costs]
   (keep
@@ -27,155 +33,143 @@
   (if (re-find #"^-?\d+\.?\d*([Ee]\+\d+|[Ee]-\d+|[Ee]\d+)?$" (.trim s))
     (read-string s)))
 
-(defn- connect [road-costs roads-path buildings-path roads-out buildings-out]
-  (let [{roads-data ::geoio/features roads-crs ::geoio/crs}
-        (geoio/load roads-path)
+(defn buildings-fields [crs]
+  {"id" {:value ::geoio/id :type "String"}
+   "orig_id" {:value :osm_id :type "String"}
+   "name" {:value :name :type "String"}
+   "type" {:value (constantly "demand") :type "String"}
+   "subtype" {:value
+              #(let [x (:subtype %)]
+                 (if (or (nil? x) (= "" x)) nil x))
+              :type "String"}
+   "area" {:value :area :type "Double"}
+   "demand" {:value :kwh_annual :type "Double"}
+   "connection_id"
+   {:value #(string/join "," (::spatial/connects-to-node %))
+    :type "String"}
+   
+   "geometry" {:value ::geoio/geometry
+               :type (format "Polygon:%s" (crs->srid crs))}
+   })
 
-        ;; we need to preprocess the cost features onto the roads,
-        ;; and delete roads which have infini-cost
-        road-costs
-        (->> (with-open [reader (io/reader road-costs)]
-                     (let [rows (csv/read-csv reader)
-                           header (repeat (map keyword (first rows)))
-                           data (rest rows)]
-                       (doall (map zipmap header data))))
+(defn ways-fields [crs]
+  (let [length*cost
+        (fn [{l ::spatial/length c :unit-cost}]
+          (* l c ))
+        ]
+    (merge
+     (select-keys (buildings-fields crs) ["id" "orig_id" "name" "subtype"])
+     {"length" {:value ::spatial/length :type "Double"}
+      "cost" {:value length*cost :type "Double"}
+      "geometry" {:value ::geoio/geometry
+                  :type (format "LineString:%s" (crs->srid crs))}
+      "start_id" {:value (comp ::geoio/id ::spatial/start-node)
+                  :type "String"}
 
-             ;; now we need to transform road-costs to be something we can
-             ;; join to
+      "end_id" {:value (comp ::geoio/id ::spatial/end-node)
+                :type "String"}
+      })))
 
-             (keep (fn [{type :osm.type
-                         class :osm.class
-                         subtype :classification
-                         unit-cost :cse.cost.per.metre}]
-                     (when-let [unit-cost (parse-number unit-cost)]
-                       (when (and type class subtype)
-                         [[type class] [subtype unit-cost]]))))
-             (into {}))
+(defn- csv-file->map [path]
+  (with-open [reader (io/reader path)]
+    (let [rows (csv/read-csv reader)
+          header (repeat (map keyword (first rows)))
+          data (rest rows)]
+      (doall (map zipmap header data)))))
 
-        _ (println "costs:" road-costs)
+(defn- numberize [k0 m]
+  ;; there must be a better way to do this operation
+  (into {}
+        (for [[k v] m]
+          [k (update v k0
+                     #(try (Double/parseDouble %)
+                           (catch NumberFormatException e)))])))
 
-        _ (println "road count before:" (count roads-data))
+(defn- connect-overpass [& {:keys [area-name
+                                   path-costs benchmarks
+
+                                   default-path-cost
+                                   default-benchmark
+                                   
+                                   buildings-out ways-out]
+                            :or {default-path-cost 1000
+                                 default-benchmark 1000}
+                            }]
+
+  (let [path-costs (->> path-costs
+                        (csv-file->map)
+                        (group-by :highway)
+                        (map #(update % 1 first))
+                        (into {})
+                        (numberize :unit-cost))
         
-        roads-data (add-road-costs roads-data road-costs)
-
-        _ (println "road count after:" (count roads-data))
+        benchmarks (->> benchmarks
+                        (csv-file->map)
+                        (group-by :building)
+                        (map #(update % 1 first))
+                        (into {})
+                        (numberize :benchmark))
         
-        {buildings-data ::geoio/features buildings-crs ::geoio/crs}
-        (geoio/load buildings-path)
+        add-path-cost
+        (fn [{st :subtype :as path}]
+          (let [{unit-cost :unit-cost subtype :subtype} (path-costs st)]
+            (assoc path
+                   :unit-cost (or unit-cost default-path-cost)
+                   :subtype   (or subtype st))))
 
-        _ (when (not= roads-crs buildings-crs)
-            (println "Warning: roads and buildings CRS differ"
-                     roads-crs buildings-crs))
+        add-benchmark
+        (fn [{st :subtype :as building}]
+          (let [{benchmark :benchmark subtype :subtype} (benchmarks st)]
+            (assoc building
+                   :benchmark (or benchmark default-benchmark)
+                   :subtype   (or subtype st))))
 
-        noded-roads (spatial/node-paths roads-data)
+        crs "EPSG:4326"
 
-        [buildings paths]
-        (spatial/add-connections buildings-crs buildings-data noded-roads)
+        _ (println "Querying overpass")
+        
+        query-results (overpass/get-geometry area-name)
 
-        crs->srid
+        ;; split into buildings and ways
+        {ways :line-string buildings :polygon}
+        (group-by ::geoio/type query-results)
 
-        (fn [crs]
-          (if (and crs (.startsWith crs "EPSG:"))
-            (string/replace crs "EPSG:" "srid=")
-            (do (println "Unknown authority" crs) "srid=4326")))
+        buildings (filter :building buildings)
+
+        _ (println (count ways) "ways" (count buildings) "buildings")
+
+        ways
+        (spatial/node-paths ways)
+        
+        _ (println (count ways) "noded ways")
+        
+        [buildings ways]
+        (spatial/add-connections crs buildings ways)
+
+        ways
+        (map add-path-cost ways)
+
+        buildings
+        (map add-benchmark buildings)
+        
+        _ (println (count ways) "connected ways")
         ]
 
-    (let [dodgy-paths (filter #(> (count (second %)) 1)
-                              (group-by ::geoio/id paths))]
-      (when (not-empty dodgy-paths)
-        (println (count dodgy-paths) "paths are duplicated:")
-        (doseq [[id paths] dodgy-paths]
-          (println id)
-          (doseq [p paths]
-            (pprint (dissoc p ::geoio/geometry)))
-          )))
+
+    (println "building subtypes" (frequencies (map :subtype buildings)))
 
     (geoio/save buildings buildings-out
-                ;; this map says
-                ;; output field name -> {:value (function to get value) :type "string for type of field"}
-                
-                {"id"   {:value ::geoio/id :type "String"}
-                 "orig_id" {:value :osm_id :type "String"}
-                 
-                 "name" {:value :name :type "String"}
-                 "type" {:value (constantly "demand") :type "String"}
-                 "subtype" {:value
-                            (fn [x]
-                              (if (= "yes" (:type x))
-                                "Unclassified"
-                                (:type x)))
-                             :type "String"}
-                 
-                 "area" {:value :area :type "Double"}
-                 "demand" {:value :kwh_annual :type "Double"}
-
-                 "geometry"
-                 {:value ::geoio/geometry :type (format "Polygon:%s" (crs->srid buildings-crs))}
-                 "connection_id"
-                 {:value #(string/join "," (::spatial/connects-to-node %)) :type "String"}
-
-                 })
-
-    (geoio/save paths roads-out
-                {"id" {:value ::geoio/id :type "String"}
-                 "orig_id" {:value :osm_id :type "String"}
-                 
-                 "name" {:value :name :type "String"}
-                 "type" {:value (constantly "path") :type "String"}
-                 "subtype" {:value :subtype :type "String"}
-                 
-                 "length" {:value ::spatial/length :type "Double"}
-                 "cost" {:value #(let [len (::spatial/length %)
-                                       cost (or (:unit-cost %) 1000)] ;; unit cost is missing for connection type
-                                   (* len cost)) :type "Double"}
-
-                 "geometry"
-                 {:value ::geoio/geometry :type (format "LineString:%s" (crs->srid roads-crs))}
-                 "start_id"
-                 {:value (comp ::geoio/id ::spatial/start-node) :type "String"}
-                 "end_id"
-                 {:value (comp ::geoio/id ::spatial/end-node) :type "String"}
-
-                 })
-
-    (println "Finished!")))
+                (assoc-in (buildings-fields crs)
+                          ["demand" :value]
+                          (fn [{b :benchmark a ::spatial/area :as x}]
+                            (* b a))))
+    (geoio/save ways ways-out (ways-fields crs))))
 
 (defn- lidar
-  "Given shapes in SHAPES, and LIDAR data in VRT, stick height, surface and volume properties on shapes into SHAPES-OUT"
-  [shapes vrt shapes-out]
-  (println "not impl")
-  )
-
-(defn -main [command & args]
-  (case command
-    "connect" (apply connect args)
-    "lidar" (apply lidar args)
-
-    (println
-"Usage:: <command> connect costs roads buildings roads-out buildings-out
-                   dimension file file-out
-                   lidar shapes vrt out")))
-
-;; other stuff we need
-;; - add surface area from lidar
-;; - add height from lidar
-;; - add computed footprint
-;;   - add fake surface area / height where no lidar
-;; - add path lengths
-;;   - add path / service intersections?
-;; - add addresses (/ construct address table with related IDs)
-
-;; (when false
-;;   (defn gen [name] (connect (format "../good-bits/%s-roads.shp" name) (format  "../good-bits/%s-buildings.shp" name) (format  "../gen/%s-ways.geojson" name) (format  "../gen/%s-buildings.geojson" name)))
-
-;;   (for [fi ["alba-iulia_romania"
-;;             "granollers_spain"
-;;             "jelgava_latvia"
-;;             "lisbon_portugal"
-;;             "warsaw_poland"
-;;             "berlin_germany"
-;;             "london_england"]]
-;;     (do (println fi)
-;;         (gen fi)))
-;;   )
+  [shapes-file lidar-files shapes-out]
+  ;; first of all we want to build an index for the bounding regions
+  ;; of the lidar files, in an appropriate CRS
+  
+  
+  (println "not impl"))
 

@@ -1,0 +1,24 @@
+highway,subtype,unit-cost
+track,Track,500
+residential,Residential street,1000
+footway,Footway,750
+service,Service way,750
+path,Path,1000
+tertiary,Tertiary road,800
+secondary,Secondary road,1000
+primary,Primary road,1200
+cycleway,Cycleway,500
+bridleway,Bridleway,500
+trunk,Trunk road,1500
+motorway,Motorway,Forbidden
+living_street,Residential street,1000
+motorway_link,Link road,Forbidden
+trunk_link,Link road,2000
+pedestrian,Footway,750
+steps,Stairs,1000
+road,Road,1000
+primary_link,Primary link road,1200
+raceway,Raceway,Forbidden
+secondary_link,Secondary link road,1000
+tertiary_link,Tertiary link road,800
+unclassified,Minor road,750

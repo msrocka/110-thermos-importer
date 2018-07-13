@@ -15,7 +15,7 @@
   (.toLowerCase
    (.replaceAll class-name "(.)([A-Z])" "$1-$2")))
 
-(defn- geometry-type [geometry]
+(defn geometry-type [geometry]
   (keyword (kebab-case (.getGeometryType geometry))))
 
 (defn- feature-iterator-seq
@@ -54,6 +54,11 @@
         type (geometry-type geometry)
         other-fields (feature-attributes feature)]
     (merge other-fields {::geometry geometry ::type type ::id identity})))
+
+(defn geom->map [geom]
+  {::geometry geom
+   ::type (geometry-type geom)
+   ::id (geometry->id geom)})
 
 (defn load
   "Load some geospatial data into a format we like.
