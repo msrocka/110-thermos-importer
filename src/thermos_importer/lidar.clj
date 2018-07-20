@@ -192,3 +192,6 @@
     (for [shape shapes]
       (JTS/transform shape matrix))))
 
+
+;; TODO
+;; load shapefile, index lidars, get CRS, reproject, run loop, done.
