@@ -15,6 +15,8 @@
                             [digest "1.4.6"]
                             [org.geotools/gt-data "18.2"]
                             [org.geotools/gt-shapefile "18.2"]
+                            [org.geotools/gt-coverage "18.2"]
+                            [org.geotools/gt-geotiff "18.2"]
                             [org.geotools/gt-geojson "18.2"]
                             [org.geotools/gt-referencing "18.2"] ; Coordinate transformations
                             [org.geotools/gt-epsg-hsql "18.2"] ; Coordinate system definitions

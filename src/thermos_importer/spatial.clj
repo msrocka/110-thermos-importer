@@ -119,7 +119,7 @@
 
 ;; it seems like this does reproject into metres, but it doesn't make
 ;; the connectors look perpendicular?
-(defn- reproject [features transform]
+(defn reproject [features transform]
   (map
    (fn [feature]
      (let [g (::geoio/geometry feature)
