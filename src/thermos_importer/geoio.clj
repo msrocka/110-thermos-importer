@@ -2,7 +2,8 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as string]
             [digest])
-  (:import [org.geotools.geojson.feature FeatureJSON]
+  (:import [com.vividsolutions.jts.geom Geometry]
+           [org.geotools.geojson.feature FeatureJSON]
            [org.geotools.geojson.geom GeometryJSON]
            [org.geotools.data FileDataStoreFinder DataUtilities]
            [org.geotools.data.collection ListFeatureCollection]
@@ -60,7 +61,7 @@
    ::type (geometry-type geom)
    ::id (geometry->id geom)})
 
-(defn load
+(defn read-from
   "Load some geospatial data into a format we like.
   The format is a map containing
   ::geometry
@@ -91,11 +92,83 @@
     {::features features ::crs crs-id}
     ))
 
-(defn save
-  "Store some geospatial data into a form that we like."
-  [data filename fields]
+(defn geometry-field-type [values]
+  (let [srid (.getSRID (first values))
+        classes (set (map #(.getClass %) values))]
+    (format "%s:srid=%d"
+            (or (and (= (count classes) 1)
+                     (cond
+                       (classes com.vividsolutions.jts.geom.Polygon)
+                       "Polygon"
+        
+                       (classes com.vividsolutions.jts.geom.Point)
+                       "Point"
 
-  (let [geo-writer (FeatureJSON. (GeometryJSON. 8))
+                       (classes com.vividsolutions.jts.geom.MultiPolygon)
+                       "MultiPolygon"
+                       
+                       (classes com.vividsolutions.jts.geom.MultiPoint)
+                       "MultiPoint"
+                       
+                       (classes com.vividsolutions.jts.geom.MultiLineString)
+                       "MultiLineString"
+                       
+                       (classes com.vividsolutions.jts.geom.GeometryCollection)
+                       "GeometryCollection"
+
+                       (classes com.vividsolutions.jts.geom.LineString)
+                       "LineString"))
+              "Geometry")
+            srid)))
+
+(defn infer-field-type [get-value values]
+  (let [value (first values)]
+    (cond
+      (instance? Geometry value)
+      ;; this needs special thought as we need most general type of geometry
+      {:type (geometry-field-type values) :value get-value}
+
+      (int? value)
+      {:type "Integer"  :value get-value}
+      
+      (double? value)
+      {:type "Double"  :value get-value}
+
+      (keyword? value)
+      {:type "String" :value #(let [x (get-value %)] (and x (str x)))}
+
+      (string? value)
+      {:type "String" :value get-value}
+
+      :otherwise
+      nil)))
+
+(defn clean-key-for-output [key]
+  (let [s (str key)]
+    (.. s
+        (toLowerCase)
+        (replaceAll "^:" "")
+        (replaceAll "[^0-9a-z]+" "_"))))
+
+(defn infer-fields [data]
+  (let [all-keys (set (mapcat keys data))]
+    (into {}
+          (for [key all-keys
+                :let [values (->> data
+                                  (map #(get % key))
+                                  (filter identity))
+                      get-value (if (keyword? key) key #(get % key))
+                      field-type (infer-field-type get-value values)]
+                :when field-type]
+            [(clean-key-for-output key) field-type]))))
+
+(defn write-to
+  "Store some geospatial data into a form that we like."
+  [data filename & {:keys [fields]}]
+
+  (let [fields (or fields (infer-fields data))
+
+        geo-writer (FeatureJSON. (GeometryJSON. 8))
 
         ;; we need a type descriptor for geotools to be happy:
         type

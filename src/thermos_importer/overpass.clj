@@ -2,12 +2,17 @@
   (:require [clojure.xml :as xml]
             [org.httpkit.client :as http]
             [thermos-importer.geoio :as geoio]
+            [thermos-importer.util :as util]
             [clojure.string :as string]
+            
             )
   
   (:import [java.io ByteArrayInputStream]
            [java.net URLEncoder]
 
+           [com.github.davidmoten.rtree RTree]
+           [com.github.davidmoten.rtree.geometry Geometries]
+           
            [org.geotools.geometry.jts JTSFactoryFinder]
            
            [com.vividsolutions.jts.geom GeometryFactory Coordinate Polygon]))
@@ -24,8 +29,8 @@
   );
   out geom meta;" (pr-str area-name)))
 
-
-(def geometry-factory (JTSFactoryFinder/getGeometryFactory))
+(def geometry-factory
+  (GeometryFactory. (com.vividsolutions.jts.geom.PrecisionModel.) 4326))
 
 (defn- node->coordinate
   "Convert an OSM xml nd entity to a JTS coordinate object"
@@ -39,11 +44,11 @@
        (filter #(= :nd (:tag %)))
        (map node->coordinate)))
 
-(defn- coordinates->polygon [[inner & outer]]
+(defn- coordinates->polygon [[exterior & interior]]
   (.createPolygon geometry-factory
-                  (.createLinearRing geometry-factory (into-array Coordinate inner))
-                  (when-not (empty? outer)
-                    (into-array (map #(into-array Coordinate %) outer)))))
+                  (.createLinearRing geometry-factory (into-array Coordinate exterior))
+                  (when-not (empty? interior)
+                    (into-array (map #(into-array Coordinate %) interior)))))
 
 (defn- closed? [coordinates] (= (first coordinates) (last coordinates)))
 
@@ -81,7 +86,7 @@
         
         one-outer-ring? (= 1 nouter)
         no-inner-rings? (zero? ninner)
-        
+        some-outer-rings? (> nouter 0)
         ]
     (cond
       any-open-rings?
@@ -92,7 +97,7 @@
       (coordinates->polygon (concat outer-rings inner-rings))
 
       ;; A multipolygon, without any inner rings
-      no-inner-rings?
+      (and no-inner-rings? some-outer-rings?)
       (->> outer-rings
            (map vector)
            (map coordinates->polygon)
@@ -174,17 +179,26 @@
 
         _ (println (count candidates) "candidates"
                    (count land-uses) "land uses")
+
+        landuse-rtree
+        (reduce
+         (fn [tree land-use]
+           (let [geom (::geoio/geometry land-use)
+                 rect (util/geom->rect geom)]
+             (.add tree land-use rect)))
+         (RTree/create)
+         land-uses)
+        
+        _ (println "Made land-use index")
         
         find-landuse
         (fn [{geom ::geoio/geometry :as a}]
-          ;; TODO add an index here
-          (let [land-use
-                (->> land-uses
-                     (filter #(.intersects geom (::geoio/geometry %)))
-                     (first)
-                     (:landuse))]
-            land-use
-            ))
+          (let [rect (util/geom->rect geom)
+                possibles (util/search-rtree landuse-rtree rect)]
+            (->> possibles
+                 (filter #(.intersects geom (::geoio/geometry %)))
+                 (first)
+                 (:landuse))))
         ]
     (map (partial add-subtype find-landuse)
          candidates)))

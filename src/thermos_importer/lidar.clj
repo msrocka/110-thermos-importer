@@ -1,48 +1,22 @@
 (ns thermos-importer.lidar
-  (:require [thermos-importer.geoio :as geoio])
-  (:import [com.github.davidmoten.rtree RTree]
-           [com.github.davidmoten.rtree.geometry Geometries]
+  (:require [thermos-importer.geoio :as geoio]
+            [thermos-importer.util :as util])
 
-           [com.vividsolutions.jts.geom GeometryFactory Coordinate Polygon]
-           
-           [org.geotools.coverage.grid.io GridFormatFinder]
-           [org.geotools.gce.geotiff GeoTiffFormat]
-           [org.geotools.factory Hints]
-           [org.geotools.geometry DirectPosition2D]
+  (:import  [com.github.davidmoten.rtree RTree]
+            [com.github.davidmoten.rtree.geometry Geometries]
 
-           [org.geotools.geometry.jts JTS]
-           [org.geotools.referencing CRS]
-           ))
+            [com.vividsolutions.jts.geom GeometryFactory Coordinate Polygon]
+            
+            [org.geotools.coverage.grid.io GridFormatFinder]
+            [org.geotools.gce.geotiff GeoTiffFormat]
+            [org.geotools.factory Hints]
+            [org.geotools.geometry DirectPosition2D]
 
-(defn- mutable-memoize
-  [f #^java.util.Map map]
-  (fn [& args]
-    (if-let [e (find map args)]
-      (val e)
-      (let [ret (apply f args)]
-        (.put map args ret)
-        ret))))
-
-(defn soft-memoize
-  [f]
-  (let [m (java.util.concurrent.ConcurrentHashMap.)
-        rq (java.lang.ref.ReferenceQueue.)
-        memoized (mutable-memoize
-                  #(java.lang.ref.SoftReference. (apply f %&) rq)
-                  m)]
-    (fn clear-fn [& args]
-                                        ; clearCache conveniently exists to poll the queue and scrub a CHM
-                                        ; used in Clojure's Keyword and DynamicClassLoader, so it's not going anywhere
-      (clojure.lang.Util/clearCache rq m)
-      (let [^java.lang.ref.SoftReference ref (apply memoized args)
-            val (.get ref)]
-        (if (.isEnqueued ref)
-                                        ; reference enqueued since our clearCache call above, retry
-          (apply clear-fn args)
-          val)))))
+            [org.geotools.geometry.jts JTS]
+            [org.geotools.referencing CRS]))
 
 (def load-raster
-  (soft-memoize
+  (util/soft-memoize
    (fn [raster]
      ;; do the load here
      (let [format (GridFormatFinder/findFormat raster)
@@ -53,10 +27,6 @@
        (.read reader nil)))))
 
 (defn get-raster-bounds [raster]
-  ;; needed in the form of an rtree geometry object
-  
-  ;; (Geometries/rectangle
-  ;;  a b c d)
   (let [raster (load-raster raster)
         geom (.getEnvelope2D raster)]
     ;; get the bounds out and put them in a rectangle
@@ -64,30 +34,47 @@
      (.getMinimum geom 0) (.getMinimum geom 1)
      (.getMaximum geom 0) (.getMaximum geom 1))))
 
-(defn- add-raster-to-index [index raster]
-  (println "  Indexing" raster)
-  (let [raster-bounds (get-raster-bounds raster)]
-    (.add index raster raster-bounds)))
+(defn get-raster-crs [raster]
+  (let [raster (load-raster raster)
+        crs (.getCoordinateReferenceSystem2D raster)]
+    (CRS/lookupIdentifier crs true)))
 
 (defn rasters->index
-  "Make an index which says which of these rasters (filenames) is where."
+  "Make an index which says which of these rasters (filenames) is where.
+  The index is a map from EPSG code to an Rtree of rasters that have that EPSG.
+  "
   [rasters]
   (println "Indexing rasters...")
-  {::index
-   (reduce add-raster-to-index (RTree/create) rasters)})
+
+  (let [properties                      ; first lookup the properties for each raster
+        (for [raster rasters]
+          {:raster raster
+           :bounds (get-raster-bounds raster)
+           :crs (get-raster-crs raster)})
+
+        by-crs                          ; bin them by CRS
+        (group-by :crs properties)
+
+        indices                         ; for each CRS, stuff them into an Rtree
+        (for [[crs rasters] by-crs]
+          [crs
+           (reduce
+            (fn [index {raster :raster bounds :bounds}]
+              (.add index raster bounds))
+            (RTree/create) rasters)])
+        ]
+    (into {} indices)))
 
 (defn- find-rasters
   "Locate all the rasters that overlap the bounds of shape."
-  [index rect]
-  (let [rasters (.search (::index index) rect)]
-    (for [entry (-> rasters .toBlocking .toIterable)]
-      (.value entry))))
+  [tree rect]
+  (util/search-rtree tree rect))
 
 (defn- sample-coords
-  "Sample coordinates within shape from raster"
+  "Sample coordinates within shape from raster.
+  Presumes coords are in the raster's CRS."
   [raster coords]
-  (let [raster (load-raster raster)
-        ]
+  (let [raster (load-raster raster)]
     (filter
      identity
      (for [[x y] coords]
@@ -149,49 +136,49 @@
       [x y])))
 
 (defn shape->dimensions
-  "Given the output from rasters->index, and a shape which is a JTS geometry
+  "Given an rtree for a set of rasters, and a shape which is a JTS geometry.
+
+  Presumes the shape has been projected into the CRS for all the rasters in the rtree.
 
   ::surface-area
   ::volume
-  ::floor-area
-  
-  Presumes shape CRS compatible with rasters' CRSs
+  ::floor-area"
+  [tree shape]
 
-  It will make sense to iterate over the shapes in a good order
-  that relates to the rasters we are thinking about."
-  [index shape]
-
-  ;; let's do the rubbish thing first, namely evaluating a bunch of
-  ;; points inside all the matching rasters for the shape.
-  
-  (let [bbox (.getEnvelopeInternal shape)
-        rect (Geometries/rectangle
-              (.getMinX bbox) (.getMinY bbox)
-              (.getMaxX bbox) (.getMaxY bbox))
-        
-        rasters (find-rasters index rect)
+  (let [rect (util/geom->rect shape)
+        rasters (find-rasters tree rect)
         grid    (grid-over shape)
         coords  (mapcat #(sample-coords % grid) rasters)]
-    
     (summarise shape coords)))
 
-(defn add-lidar-to-shapes [rasters shapes]
-  ;; shapes are some geoio things (maps with stuff)
-  ;; rasters is a list of filenames for things
-  
-  (let [index (rasters->index rasters)]
-    (for [shape shapes]
-      (merge shape
-             (shape->dimensions index (::geoio/geometry shape))))))
+(defn add-lidar-to-shapes
+  "Given a list of `rasters` and a `shapes`, which is a geoio feature thingy
+  i.e. a map with ::geoio/crs and ::geoio/features in it
 
-(defn reproject-shapes [shapes from-crs to-crs]
-  (let [matrix (CRS/findMathTransform
-                (CRS/decode from-crs true)
-                (CRS/decode to-crs))]
+  return an updated `shapes`, in which the features have
+  got ::lidar/surface-area etc. from shape->dimensions."
+  [rasters shapes]
+  (let [index (rasters->index rasters)
+        shapes-crs (::geoio/crs shapes)]
+    (reduce
+     (fn [shapes [raster-crs raster-tree]]
+       (let [transform (CRS/findMathTransform
+                        (CRS/decode shapes-crs true)
+                        (CRS/decode raster-crs))]
+         
+         (printf "Raster CRS: %s, geometry CRS: %s, %d shapes to process"
+                 raster-crs
+                 shapes-crs
+                 (count (::geoio/features shapes)))
 
-    (for [shape shapes]
-      (JTS/transform shape matrix))))
-
-
-;; TODO
-;; load shapefile, index lidars, get CRS, reproject, run loop, done.
+         (println)
+         
+         (update shapes ::geoio/features
+                 #(doall (for [feature %]
+                           (merge feature
+                                  (shape->dimensions
+                                   raster-tree
+                                   (JTS/transform
+                                    (::geoio/geometry feature)
+                                    transform))))))))
+     shapes index)))

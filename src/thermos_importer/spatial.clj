@@ -5,7 +5,7 @@
   (:import [com.github.davidmoten.rtree RTree]
            [com.github.davidmoten.rtree.geometry Geometries]
 
-           [com.vividsolutions.jts.geom GeometryFactory Coordinate]
+           [com.vividsolutions.jts.geom PrecisionModel GeometryFactory Coordinate]
            [com.vividsolutions.jts.operation.distance DistanceOp]
            [com.vividsolutions.jts.noding
             MCIndexNoder NodedSegmentString IntersectionAdder]
@@ -127,8 +127,7 @@
            id2 (geoio/geometry->id g2)]
        (assoc feature
               ::geoio/id id2
-              ::geoio/geometry g2)
-       ))
+              ::geoio/geometry g2)))
    features))
 
 (defn add-connections
@@ -154,7 +153,10 @@
         node-index (features->index nodes)
 
         ;; TODO factor this repeated code :
-        factory (GeometryFactory.)
+        factory (GeometryFactory. (PrecisionModel.)
+                                  (CRS/lookupEpsgCode
+                                   (CRS/decode crs true)
+                                   true))
         make-node
         #(let [p (.createPoint factory %)]
            {::geoio/geometry p

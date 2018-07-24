@@ -33,43 +33,6 @@
   (if (re-find #"^-?\d+\.?\d*([Ee]\+\d+|[Ee]-\d+|[Ee]\d+)?$" (.trim s))
     (read-string s)))
 
-(defn buildings-fields [crs]
-  {"id" {:value ::geoio/id :type "String"}
-   "orig_id" {:value :osm_id :type "String"}
-   "name" {:value :name :type "String"}
-   "type" {:value (constantly "demand") :type "String"}
-   "subtype" {:value
-              #(let [x (:subtype %)]
-                 (if (or (nil? x) (= "" x)) nil x))
-              :type "String"}
-   "area" {:value :area :type "Double"}
-   "demand" {:value :kwh_annual :type "Double"}
-   "connection_id"
-   {:value #(string/join "," (::spatial/connects-to-node %))
-    :type "String"}
-   
-   "geometry" {:value ::geoio/geometry
-               :type (format "Polygon:%s" (crs->srid crs))}
-   })
-
-(defn ways-fields [crs]
-  (let [length*cost
-        (fn [{l ::spatial/length c :unit-cost}]
-          (* l c ))
-        ]
-    (merge
-     (select-keys (buildings-fields crs) ["id" "orig_id" "name" "subtype"])
-     {"length" {:value ::spatial/length :type "Double"}
-      "cost" {:value length*cost :type "Double"}
-      "geometry" {:value ::geoio/geometry
-                  :type (format "LineString:%s" (crs->srid crs))}
-      "start_id" {:value (comp ::geoio/id ::spatial/start-node)
-                  :type "String"}
-
-      "end_id" {:value (comp ::geoio/id ::spatial/end-node)
-                :type "String"}
-      })))
-
 (defn- csv-file->map [path]
   (with-open [reader (io/reader path)]
     (let [rows (csv/read-csv reader)
@@ -146,30 +109,98 @@
         [buildings ways]
         (spatial/add-connections crs buildings ways)
 
+        _ (println (count ways) "connected ways")
+        
         ways
         (map add-path-cost ways)
 
         buildings
         (map add-benchmark buildings)
         
-        _ (println (count ways) "connected ways")
+        buildings
+        (for [{id ::geoio/id
+               geometry ::geoio/geometry
+               osm-id :osm_id
+               name :name
+               subtype :subtype
+               area ::spatial/area
+               benchmark :benchmark
+               connections ::spatial/connects-to-node}
+              buildings]
+          {:id id
+           :orig_id osm-id
+           :name name
+           :type "demand"
+           :subtype (if (or (nil? subtype) (= "" subtype)) nil subtype)
+           :area area
+           :benchmark benchmark
+           :demand (* area benchmark)
+           :connection_id (string/join "," connections)
+           :geometry geometry})
+
+        ways
+        (for [{id ::geoio/id
+               geometry ::geoio/geometry
+               osm-id :osm_id
+               name :name
+               subtype :subtype
+               length ::spatial/length
+               unit-cost :unit-cost
+               {start-id ::geoio/id} ::spatial/start-node
+               {end-id ::geoio/id} ::spatial/end-node}
+              
+              ways]
+          {:id id
+           :orig_id osm-id
+           :type "path"
+           :subtype (if (or (nil? subtype) (= "" subtype)) nil subtype)
+           :length length
+           :unit-cost unit-cost
+           :cost (* length unit-cost)
+           :start-id start-id
+           :end-id end-id
+           :geometry geometry}
+          )
         ]
 
-
+    (def last-buildings buildings)
+    (def last-ways ways)
     (println "building subtypes" (frequencies (map :subtype buildings)))
 
-    (geoio/save buildings buildings-out
-                (assoc-in (buildings-fields crs)
-                          ["demand" :value]
-                          (fn [{b :benchmark a ::spatial/area :as x}]
-                            (* b a))))
-    (geoio/save ways ways-out (ways-fields crs))))
+    (geoio/write-to buildings buildings-out)
+    (geoio/write-to ways ways-out)))
 
 (defn- lidar
   [shapes-file lidar-files shapes-out]
-  ;; first of all we want to build an index for the bounding regions
-  ;; of the lidar files, in an appropriate CRS
-  
-  
-  (println "not impl"))
+  )
 
+
+(defn- just-node
+  [ways-file buildings-file
+   ways-out buildings-out
+   ]
+  (let [{ways ::geoio/features ways-crs ::geoio/crs}           (geoio/read-from ways-file)
+        {buildings ::geoio/features buildings-crs ::geoio/crs} (geoio/read-from buildings-file)
+
+        orig-way-fields (set (mapcat keys ways))
+        orig-building-fields (set (mapcat keys buildings))
+        
+        ways (spatial/node-paths ways)
+
+        [buildings ways] (spatial/add-connections ways-crs buildings ways)
+
+        buildings
+        (for [b buildings]
+          (merge (select-keys b orig-building-fields)
+                 {:connection_id (string/join ","
+                                              (::spatial/connects-to-node b))}))
+
+        ways
+        (for [w ways]
+          (merge (select-keys w (orig-way-fields))
+                 {:start-id (::geoio/id (::spatial/start-node w))
+                  :end-id (::geoio/id (::spatial/end-node w))}))
+        ]
+
+    (geoio/write-to ways ways-out)
+    (geoio/write-to buildings buildings-out)))
