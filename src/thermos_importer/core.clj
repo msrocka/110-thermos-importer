@@ -3,6 +3,7 @@
   (:require [clojure.tools.cli :refer [parse-opts]]
             [clojure.java.io :as io]
             [thermos-importer.geoio :as geoio]
+            [thermos-importer.lidar :as lidar]
             [thermos-importer.spatial :as spatial]
             [thermos-importer.overpass :as overpass]
             [clojure.string :as string]
@@ -48,15 +49,13 @@
                      #(try (Double/parseDouble %)
                            (catch NumberFormatException e)))])))
 
-(defn- connect-overpass [& {:keys [area-name
-                                   path-costs benchmarks
+(defn- connect-overpass [area-name buildings-out ways-out
+                         & {:keys [path-costs
+                                   benchmarks
 
                                    default-path-cost
-                                   default-benchmark
-                                   
-                                   buildings-out ways-out]
-                            :or {default-path-cost 1000
-                                 default-benchmark 1000}
+                                   default-benchmark]
+                            
                             }]
 
   (let [path-costs (->> path-costs
@@ -167,18 +166,33 @@
     (def last-ways ways)
     (println "building subtypes" (frequencies (map :subtype buildings)))
 
-    (geoio/write-to buildings buildings-out)
-    (geoio/write-to ways ways-out)))
+    ;; TODO make CRS requirement for geoio, don't infer from SRID on geom
+    ;; as that is not reliable.
+    
+    (geoio/write-to {::geoio/features buildings
+                     ::geoio/crs "EPSG:4326"}
+                    buildings-out)
+    (geoio/write-to {::geoio/features ways
+                     ::geoio/crs "EPSG:4326"}
+                    ways-out)))
 
-(defn- lidar
-  [shapes-file lidar-files shapes-out]
-  )
+(defn- add-lidar
+  [shapes-file lidar-directory shapes-out]
 
+  (let [shapes (geoio/read-from shapes-file)
+        
+        lidar-files (->> (file-seq (io/file lidar-directory))
+                         (filter #(and (.isFile %)
+                                       (or (.endsWith (.getName %) ".tif")
+                                           (.endsWith (.getName %) ".tiff")))))
+        
+        shapes (lidar/add-lidar-to-shapes lidar-files shapes)]
+
+    (geoio/write-to shapes shapes-out)))
 
 (defn- just-node
   [ways-file buildings-file
-   ways-out buildings-out
-   ]
+   ways-out buildings-out]
   (let [{ways ::geoio/features ways-crs ::geoio/crs}           (geoio/read-from ways-file)
         {buildings ::geoio/features buildings-crs ::geoio/crs} (geoio/read-from buildings-file)
 
@@ -202,5 +216,92 @@
                   :end-id (::geoio/id (::spatial/end-node w))}))
         ]
 
-    (geoio/write-to ways ways-out)
-    (geoio/write-to buildings buildings-out)))
+    (geoio/write-to {::geoio/features ways ::geoio/crs ways-crs} ways-out)
+    (geoio/write-to {::geoio/features buildings ::geoio/crs buildings-crs} buildings-out)))
+
+(defn run-with-arguments [command options check-positional arguments]
+  (let [{:keys [options arguments errors summary]} (parse-opts arguments options)
+        errors (seq (filter identity (concat errors (check-positional arguments))))
+        ]
+    (cond (:help options)
+          (do (println summary)
+
+              )
+          
+          errors
+          (do (doseq [e errors]
+                (println "Error:" e))
+              (println)
+              (println summary)
+
+              )
+
+          :default
+          
+          (apply command (concat arguments (apply concat options)))))
+  )
+
+(defn file-exists [file]
+  (when-not (.exists (io/as-file file))
+    (format "%s does not exist" file)))
+
+(defn file-not-exists [file]
+  (when (.exists (io/as-file file))
+    (format "%s already exists" file)))
+
+(defn -main [& args]
+  (let [[com & args] args]
+    (case com
+      "overpass"
+      (run-with-arguments
+       connect-overpass
+       [[nil "--path-costs PATH-COSTS" "Road costs file"
+         :missing "A road costs file is required"
+         :validate [#(.exists (io/as-file %))
+                    "The path costs file must exist"]
+         ]
+        [nil "--benchmarks BENCHMARKS" "Benchmarks file"
+         :missing "A benchmarks file is required"
+         :validate [#(.exists (io/as-file %))
+                    "The benchmarks file must exist"]]
+        [nil "--default-path-cost DEFAULT-PATH-COST" "Cost of unknown road type"
+         :parse-fn #(Double/parseDouble %)
+         :default 1000]
+        [nil "--default-benchmark DEFAULT-BENCHMARK" "Unit demand of unknown building type"
+         :default 1000
+         :parse-fn #(Double/parseDouble %)]]
+       #(if (= 3 (count %))
+          [(file-exists (nth % 1))
+           (file-not-exists (nth % 2))]
+          ["Required arguments: <area name> <buildings output> <ways output>"])
+       args)
+
+      "lidar"
+      (run-with-arguments
+       add-lidar
+       []
+       #(if (= 3 (count %))
+          [(file-exists (nth % 0))
+           (file-exists (nth % 1))
+           (file-not-exists (nth % 2))]
+          ["Required arguments: <shapefile in> <lidar directory> <shapefile out>"])
+       args)
+
+      "node"
+      (run-with-arguments
+       just-node
+       []
+       #(if (= 4 (count %))
+          [(file-exists (nth % 0))
+           (file-exists (nth % 1))
+           (file-not-exists (nth % 2))
+           (file-not-exists (nth % 3))
+           ]
+          ["Required arguments: <ways input> <buildings input> <ways output> <buildings output>"])
+       args)
+      
+      
+      (do (when com (println "Unknown command" com))
+          (println "Usage: <this command> overpass | lidar | node")))))
+
+
