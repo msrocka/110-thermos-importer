@@ -1,7 +1,7 @@
 (ns thermos-importer.util
-  (:import
-   [com.github.davidmoten.rtree RTree]
-   [com.github.davidmoten.rtree.geometry Geometries]))
+  (:require [thermos-importer.geoio :as geoio])
+  (:import com.github.davidmoten.rtree.geometry.Geometries
+           com.github.davidmoten.rtree.RTree))
 
 (defn- mutable-memoize
   [f #^java.util.Map map]
@@ -30,6 +30,24 @@
           (apply clear-fn args)
           val)))))
 
+(declare index-features search-rtree geom->rect)
+
+(defn index-features [features]
+  (reduce
+   (fn [tree feature]
+     (let [box (geom->rect (::geoio/geometry feature))]
+       (.add tree feature box)))
+   
+   (RTree/create)
+   features))
+
+(defn search-rtree [tree rect]
+  (for [entry (.. tree
+                  (search rect)
+                  (toBlocking)
+                  (toIterable))]
+    (.value entry)))
+
 (defn geom->rect [geom]
   (let [bbox (.getEnvelopeInternal geom)]
     (try (Geometries/rectangle
@@ -42,9 +60,11 @@
                     geom)
            (throw e)))))
 
-(defn search-rtree [tree rect]
-  (for [entry (.. tree
-                  (search rect)
-                  (toBlocking)
-                  (toIterable))]
-    (.value entry)))
+(defn seq-counter 
+  "calls callback after every n'th entry in sequence is evaluated. 
+  Optionally takes another callback to call once the seq is fully evaluated."
+  ([sequence n callback]
+     (map #(do (if (= (rem %1 n) 0) (callback %1)) %2) (iterate inc 1) sequence))
+  ([sequence n callback finished-callback]
+     (drop-last (lazy-cat (seq-counter sequence n callback) 
+                  (lazy-seq (cons (finished-callback) ())))))) 
