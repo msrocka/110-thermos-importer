@@ -73,7 +73,7 @@
   [filename]
 
   (let [store (FileDataStoreFinder/getDataStore (io/as-file filename))
-
+        
         _ (.setCharset store (StandardCharsets/UTF_8))
 
         feature-source (->> store .getTypeNames first (.getFeatureSource store))
@@ -92,8 +92,8 @@
     {::features features ::crs crs-id}
     ))
 
-(defn geometry-field-type [values]
-  (let [srid (.getSRID (first values))
+(defn geometry-field-type [srid values]
+  (let [srid (or srid (.getSRID (first values)))
         classes (set (map #(.getClass %) values))]
     (format "%s:srid=%d"
             (or (and (= (count classes) 1)
@@ -121,12 +121,12 @@
               "Geometry")
             srid)))
 
-(defn infer-field-type [get-value values]
+(defn infer-field-type [srid get-value values]
   (let [value (first values)]
     (cond
       (instance? Geometry value)
       ;; this needs special thought as we need most general type of geometry
-      {:type (geometry-field-type values) :value get-value}
+      {:type (geometry-field-type srid values) :value get-value}
 
       (int? value)
       {:type "Integer"  :value get-value}
@@ -150,7 +150,7 @@
         (replaceAll "^:" "")
         (replaceAll "[^0-9a-z]+" "_"))))
 
-(defn infer-fields [data]
+(defn infer-fields [srid data]
   (let [all-keys (set (mapcat keys data))]
     (into {}
           (for [key all-keys
@@ -158,15 +158,21 @@
                                   (map #(get % key))
                                   (filter identity))
                       get-value (if (keyword? key) key #(get % key))
-                      field-type (infer-field-type get-value values)]
+                      field-type (infer-field-type srid get-value values)]
                 :when field-type]
             [(clean-key-for-output key) field-type]))))
 
 (defn write-to
+  ;; ah what if the data has a CRS in it per read-from
   "Store some geospatial data into a form that we like."
   [data filename & {:keys [fields]}]
 
-  (let [fields (or fields (infer-fields data))
+  (let [crs (::crs data)
+        epsg (CRS/lookupEpsgCode (CRS/decode crs true) true)
+        
+        data (::features data)
+
+        fields (or fields (infer-fields epsg data))
 
         geo-writer (FeatureJSON. (GeometryJSON. 8))
 
