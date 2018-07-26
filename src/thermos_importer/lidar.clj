@@ -1,19 +1,16 @@
 (ns thermos-importer.lidar
   (:require [thermos-importer.geoio :as geoio]
             [thermos-importer.util :as util])
-
-  (:import  [com.github.davidmoten.rtree RTree]
-            [com.github.davidmoten.rtree.geometry Geometries]
-
-            [com.vividsolutions.jts.geom GeometryFactory Coordinate Polygon]
-            
-            [org.geotools.coverage.grid.io GridFormatFinder]
-            [org.geotools.gce.geotiff GeoTiffFormat]
-            [org.geotools.factory Hints]
-            [org.geotools.geometry DirectPosition2D]
-
-            [org.geotools.geometry.jts JTS]
-            [org.geotools.referencing CRS]))
+  (:import com.github.davidmoten.rtree.geometry.Geometries
+           com.github.davidmoten.rtree.RTree
+           [com.vividsolutions.jts.geom Coordinate GeometryFactory Polygon]
+           [com.vividsolutions.jts.geom.util LineStringExtracter]
+           org.geotools.coverage.grid.io.GridFormatFinder
+           org.geotools.factory.Hints
+           org.geotools.gce.geotiff.GeoTiffFormat
+           org.geotools.geometry.DirectPosition2D
+           org.geotools.geometry.jts.JTS
+           org.geotools.referencing.CRS))
 
 (def load-raster
   (util/soft-memoize
@@ -48,9 +45,11 @@
 
   (let [properties                      ; first lookup the properties for each raster
         (for [raster rasters]
-          {:raster raster
-           :bounds (get-raster-bounds raster)
-           :crs (get-raster-crs raster)})
+          (do
+            (println "  *" raster)
+            {:raster raster
+            :bounds (get-raster-bounds raster)
+            :crs (get-raster-crs raster)}))
 
         by-crs                          ; bin them by CRS
         (group-by :crs properties)
@@ -82,7 +81,9 @@
                      (.evaluate raster
                                 (DirectPosition2D. x y)
                                 nil))
-                    (catch Exception e nil))]
+                    (catch org.opengis.coverage.PointOutsideCoverageException e
+                      nil)
+                    )]
          (when z [x y z]))))))
 
 (defn- summarise
@@ -103,21 +104,25 @@
                         (/ (apply + heights) (count heights)))
 
           footprint (.getArea shape)
-          surface-area (+ (* perimeter mean-height) footprint)
-          volume (* footprint mean-height)
           ]
       (when (> mean-height 1000)
         (let [heights (map last coords)]
           (println mean-height)
           (println (apply min heights) (apply max heights))))
       
-      {::surface-area surface-area
-       ::volume volume
+      {::perimeter perimeter
+       ::footprint footprint
        ::height mean-height
        })))
 
 (defn- grid-over
-  "Make a seq of coordinates covering the SHAPE with a buffer of 1m"
+  "Make a seq of coordinates covering the SHAPE with a buffer of 1m
+
+  TODO: make faster; delaunay triangulation + area weighted choice of
+  triangle + uniform random point inside triangle
+
+  http://mathworld.wolfram.com/TrianglePointPicking.html
+  "
   [shape]
   (let [shape (.buffer shape 1.5)
         
@@ -151,6 +156,33 @@
         coords  (mapcat #(sample-coords % grid) rasters)]
     (summarise shape coords)))
 
+(defn estimate-party-walls [features]
+  (println "Estimating party walls...")
+  (let [index (util/index-features features)]
+    (for [feature features]
+      (let [geom (::geoio/geometry feature)
+            rect (util/geom->rect geom)
+            neighbours (util/search-rtree index rect)
+            perimeter (.getLength geom)
+
+            boundary (.getBoundary geom)
+
+            inter-bounds (for [n neighbours :when (not= n feature)]
+                           (let [n-boundary (.getBoundary (::geoio/geometry n))]
+                             (LineStringExtracter/getGeometry
+                              (.intersection boundary n-boundary))))
+            
+            ]
+        (if (seq inter-bounds)
+          (let [party-bounds (reduce
+                              (fn [a b] (.union a b))
+                              inter-bounds)
+                party-perimeter (.getLength party-bounds)
+
+                party-perimeter-proportion (/ party-perimeter perimeter)]
+            (assoc feature ::shared-perimeter party-perimeter-proportion))
+          feature)))))
+
 (defn add-lidar-to-shapes
   "Given a list of `rasters` and a `shapes`, which is a geoio feature thingy
   i.e. a map with ::geoio/crs and ::geoio/features in it
@@ -159,26 +191,45 @@
   got ::lidar/surface-area etc. from shape->dimensions."
   [rasters shapes]
   (let [index (rasters->index rasters)
-        shapes-crs (::geoio/crs shapes)]
+        shapes-crs (::geoio/crs shapes)
+
+        shapes (update shapes ::geoio/features estimate-party-walls)
+        ]
+
     (reduce
      (fn [shapes [raster-crs raster-tree]]
+       (printf "Raster CRS: %s, geometry CRS: %s"
+               raster-crs
+               shapes-crs)
+       
        (let [transform (CRS/findMathTransform
                         (CRS/decode shapes-crs true)
-                        (CRS/decode raster-crs))]
-         
-         (printf "Raster CRS: %s, geometry CRS: %s, %d shapes to process"
-                 raster-crs
-                 shapes-crs
-                 (count (::geoio/features shapes)))
-
-         (println)
+                        (CRS/decode raster-crs))
+             total (count (::geoio/features shapes))
+             start (atom (System/currentTimeMillis))
+             ]
          
          (update shapes ::geoio/features
-                 #(doall (for [feature %]
-                           (merge feature
-                                  (shape->dimensions
-                                   raster-tree
-                                   (JTS/transform
-                                    (::geoio/geometry feature)
-                                    transform))))))))
+                 #(doall
+                   (util/seq-counter
+                    (for [feature %]
+                      (merge feature
+                             (shape->dimensions
+                              raster-tree
+                              (JTS/transform
+                               (::geoio/geometry feature)
+                               transform))))
+                    500
+                    (fn [n] (let [now (System/currentTimeMillis)
+                                  ds (/ (- now @start) 1000.0)
+                                  ps (/ 500 ds)
+                                  rem (- total n)
+                                  rte (/ rem ps)
+                                  ]
+                              (reset! start now)
+                              (println n "/" total ds "seconds")
+                              (println ps "/sec" (/ rte 60) "mins remain")
+                              ))
+
+                    )))))
      shapes index)))
