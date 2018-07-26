@@ -1,6 +1,6 @@
 (ns thermos-importer.overpass
   (:require [clojure.xml :as xml]
-            [org.httpkit.client :as http]
+            [clj-http.client :as http]
             [thermos-importer.geoio :as geoio]
             [thermos-importer.util :as util]
             [clojure.string :as string]
@@ -17,9 +17,9 @@
            
            [com.vividsolutions.jts.geom GeometryFactory Coordinate Polygon]))
 
-(def overpass-api "http://www.overpass-api.de/api/interpreter")
+(def overpass-api "http://overpass-api.de/api/interpreter")
 
-(defn- query-name [area-name]
+(defn query-name [area-name]
   (format "(area[name=%s];)->.a;
   (
   way[landuse] (area.a);
@@ -156,8 +156,9 @@
     (assoc feature :subtype subtype)))
 
 (defn query-overpass [query]
-  (-> (str overpass-api "?data=" (URLEncoder/encode query "UTF-8"))
-      (http/get {:as :stream})
+  (-> (http/post overpass-api
+                 {:as :stream
+                  :body (str "data=" (URLEncoder/encode query "UTF-8"))})
       (deref)
       (:body)
       (xml/parse)
