@@ -46,24 +46,4 @@
   (let [dir (if (seq dir) dir #{"target"})]
     (comp (aot) (pom) (uber) (jar) (target :dir dir))))
 
-(deftask run "Run the jar"
-  []
-  (require '[thermos-importer.core :as app])
-  (apply (resolve 'app/-main) *args*)
-  )
-
-;; (deftask import
-;;   "Import base spatial data into a geojson file"
-;;   [r roads VAL str "An OSM extract of roads (shapefile)"
-;;    b buildings VAL str "An OSM extract of buildings (shapefile)"
-;;    a addresses VAL str "An address dataset (columnar, with x,y)"
-;;    l lidar VAL str "A LIDAR dataset"
-;;    b bounding-box VAL str "A shapefile containing named regions"
-;;    ]
-;;   (require '[thermos-importer.core :as app])
-;;   ((resolve 'app/run)
-
-;;    ))
-
-
 (require '[adzerk.boot-test :refer [test]])
