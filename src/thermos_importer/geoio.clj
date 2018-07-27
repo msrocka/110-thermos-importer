@@ -165,7 +165,7 @@
 (defn write-to
   ;; ah what if the data has a CRS in it per read-from
   "Store some geospatial data into a form that we like."
-  [data filename & {:keys [fields]}]
+  [data filename & {:keys [fields chunk-size]}]
 
   (let [crs (::crs data)
         epsg (CRS/lookupEpsgCode (CRS/decode crs true) true)
@@ -191,18 +191,27 @@
         feature-builder
         (SimpleFeatureBuilder. type)
 
-        feature-collection
-        (ListFeatureCollection.
-         type
-         (for [datum data]
-           ;; TODO add details to builder here
-           ;; it seems that on buildfeature it resets
-           (do (doseq [[field-name {value-function :value}] fields]
-                 (.add feature-builder (value-function datum)))
-               (.buildFeature feature-builder nil))))
+        write-chunk
+        (fn [filename data]
+          (println "writing" filename "...")
+          (with-open [writer (io/writer filename)]
+            (.writeFeatureCollection
+             geo-writer
+             (ListFeatureCollection.
+              type
+              (for [datum data]
+                ;; TODO add details to builder here
+                ;; it seems that on buildfeature it resets
+                (do (doseq [[field-name {value-function :value}] fields]
+                      (.add feature-builder (value-function datum)))
+                    (.buildFeature feature-builder nil))))
+             writer)))
         ]
-    (with-open [writer (io/writer filename)]
-      (.writeFeatureCollection
-       geo-writer
-       feature-collection
-       writer))))
+    
+    (if chunk-size
+      (doseq [[i data]
+              (map-indexed vector (partition chunk-size data))]
+        (write-chunk (str filename "." i) data))
+      (write-chunk filename data)
+      )
+    ))
