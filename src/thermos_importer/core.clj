@@ -9,7 +9,8 @@
             [clojure.string :as string]
             [clojure.pprint :refer [pprint]]
             [clojure.data.csv :as csv]
-            ))
+
+            [clojure.set :as set]))
 
 (defn crs->srid [crs]
   (if (and crs (.startsWith crs "EPSG:"))
@@ -192,62 +193,72 @@
 
 (defn- just-node
   [ways-file buildings-file
-   ways-out buildings-out]
+   ways-out buildings-out
+   & {:keys [chunk-size omit-fields]
+      :or {chunk-size nil}}
+   ]
   (let [{ways ::geoio/features ways-crs ::geoio/crs}           (geoio/read-from ways-file)
         {buildings ::geoio/features buildings-crs ::geoio/crs} (geoio/read-from buildings-file)
 
-        orig-way-fields (set (mapcat keys ways))
-        orig-building-fields (set (mapcat keys buildings))
+        orig-way-fields (set/difference (set (mapcat keys ways))
+                                        (set omit-fields))
+        
+        orig-building-fields (set/difference (set (mapcat keys buildings))
+                                             (set omit-fields))
+
+        _ (printf "%d buildings [%s], %d ways [%s]\n"
+                  (count buildings) buildings-crs
+                  (count ways) ways-crs)
         
         ways (spatial/node-paths ways)
 
+        _ (printf "%d noded ways\n" (count ways))
+
         [buildings ways] (spatial/add-connections ways-crs buildings ways)
 
+        _ (printf "%d connected ways\n" (count ways))
+        
         buildings
         (for [b buildings]
           (merge (select-keys b orig-building-fields)
-                 {:connection_id (string/join ","
-                                              (::spatial/connects-to-node b))}))
+                 {:connection_id (string/join "," (::spatial/connects-to-node b))}))
 
         ways
         (for [w ways]
-          (merge (select-keys w (orig-way-fields))
-                 {:start-id (::geoio/id (::spatial/start-node w))
+          (merge (select-keys w orig-way-fields)
+                 {:length (::spatial/length w)
+                  :start-id (::geoio/id (::spatial/start-node w))
                   :end-id (::geoio/id (::spatial/end-node w))}))
         ]
-
-    (geoio/write-to {::geoio/features ways ::geoio/crs ways-crs} ways-out)
-    (geoio/write-to {::geoio/features buildings ::geoio/crs buildings-crs} buildings-out)))
+    (geoio/write-to {::geoio/features ways ::geoio/crs ways-crs} ways-out
+                    :chunk-size chunk-size)
+    
+    (geoio/write-to {::geoio/features buildings ::geoio/crs buildings-crs} buildings-out
+                    :chunk-size chunk-size)))
 
 (defn run-with-arguments [command options check-positional arguments]
   (let [{:keys [options arguments errors summary]} (parse-opts arguments options)
         errors (seq (filter identity (concat errors (check-positional arguments))))
         ]
     (cond (:help options)
-          (do (println summary)
-
-              )
+          (do (println summary))
           
           errors
           (do (doseq [e errors]
                 (println "Error:" e))
               (println)
-              (println summary)
-
-              )
+              (println summary))
 
           :default
-          
-          (apply command (concat arguments (apply concat options)))))
-  )
+          (apply command (concat arguments (apply concat options))))))
 
 (defn file-exists [file]
   (when-not (.exists (io/as-file file))
-    (format "%s does not exist" file)))
+    (format "file %s does not exist" file)))
 
 (defn file-not-exists [file]
   (when (.exists (io/as-file file))
-    (format "%s already exists" file)))
+    (format "file %s already exists" file)))
 
 (defn -main [& args]
   (let [[com & args] args]
@@ -290,7 +301,13 @@
       "node"
       (run-with-arguments
        just-node
-       []
+       [[nil "--omit-field FIELD" "Leave out the given field"
+         :id :omit-fields
+         :assoc-fn
+         (fn [m k v]
+           (update m k conj v))]
+        [nil "--chunk-size CHUNK-SIZE" "Make geojson into chunks of this size"
+         :parse-fn #(Integer/parseInt %)]]
        #(if (= 4 (count %))
           [(file-exists (nth % 0))
            (file-exists (nth % 1))
