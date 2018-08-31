@@ -6,86 +6,57 @@
             [thermos-importer.lidar :as lidar]
             [thermos-importer.spatial :as spatial]
             [thermos-importer.overpass :as overpass]
+            [thermos-importer.svm-predict :as svm]
             [clojure.string :as string]
             [clojure.pprint :refer [pprint]]
             [clojure.data.csv :as csv]
 
-            [clojure.set :as set]))
+            [clojure.set :as set]
+            [clojure.data.json :as json]))
 
 (defn crs->srid [crs]
   (if (and crs (.startsWith crs "EPSG:"))
     (string/replace crs "EPSG:" "srid=")
     (do (println "Unknown authority" crs) "srid=4326")))
 
-(defn- add-road-costs [roads-data road-costs]
-  (keep
-   (fn [{type :type
-         class :class
-         :as road}]
-     (when-let [stuff (road-costs [type class])]
-       (let [[new-class road-cost] stuff]
-         (assoc road
-                :unit-cost road-cost
-                :subtype new-class))))
-   roads-data))
-
-(defn- parse-number
-  "Reads a number from a string. Returns nil if not a number."
-  [s]
-  (if (re-find #"^-?\d+\.?\d*([Ee]\+\d+|[Ee]-\d+|[Ee]\d+)?$" (.trim s))
-    (read-string s)))
+(defn- try-parse-double [s]
+  (try (Double/parseDouble s)
+       (catch NumberFormatException e s)))
 
 (defn- csv-file->map [path]
   (with-open [reader (io/reader path)]
     (let [rows (csv/read-csv reader)
           header (repeat (map keyword (first rows)))
-          data (rest rows)]
+          data (rest rows)
+          data (map data (partial map try-parse-double))
+          ]
       (doall (map zipmap header data)))))
 
-(defn- numberize [k0 m]
-  ;; there must be a better way to do this operation
-  (into {}
-        (for [[k v] m]
-          [k (update v k0
-                     #(try (Double/parseDouble %)
-                           (catch NumberFormatException e)))])))
+(defn- assoc-by [f s]
+  (reduce #(assoc %1 (f %2) %2)) {} s))
 
 (defn- connect-overpass [area-name buildings-out ways-out
-                         & {:keys [path-costs
-                                   benchmarks
+                         & {:keys [path-subtypes
+                                   building-subtypes]}
+                         ]
+  (let [path-subtypes
+        (if path-subtypes
+          (-> path-subtypes
+              csv-file->map
+              assoc-by :highway)
+          {})
 
-                                   default-path-cost
-                                   default-benchmark]
-                            
-                            }]
+        building-subtypes
+        (if building-subtypes
+          (-> path-subtypes
+              csv-file->map
+              assoc-by :building)
+          {})
 
-  (let [path-costs (->> path-costs
-                        (csv-file->map)
-                        (group-by :highway)
-                        (map #(update % 1 first))
-                        (into {})
-                        (numberize :unit-cost))
-        
-        benchmarks (->> benchmarks
-                        (csv-file->map)
-                        (group-by :building)
-                        (map #(update % 1 first))
-                        (into {})
-                        (numberize :benchmark))
-        
-        add-path-cost
-        (fn [{st :subtype :as path}]
-          (let [{unit-cost :unit-cost subtype :subtype} (path-costs st)]
-            (assoc path
-                   :unit-cost (or unit-cost default-path-cost)
-                   :subtype   (or subtype st))))
-
-        add-benchmark
-        (fn [{st :subtype :as building}]
-          (let [{benchmark :benchmark subtype :subtype} (benchmarks st)]
-            (assoc building
-                   :benchmark (or benchmark default-benchmark)
-                   :subtype   (or subtype st))))
+        update-subtype
+        (fn [m {st :subtype :as thing}]
+          (assoc thing
+                 :subtype (or (get m st) st)))
 
         crs "EPSG:4326"
 
@@ -112,10 +83,10 @@
         _ (println (count ways) "connected ways")
         
         ways
-        (map add-path-cost ways)
+        (map (partial update-subtype path-subtypes) ways)
 
         buildings
-        (map add-benchmark buildings)
+        (map (partial update-subtype building-subtypes) buildings)
         
         buildings
         (for [{id ::geoio/id
@@ -124,17 +95,14 @@
                name :name
                subtype :subtype
                area ::spatial/area
-               benchmark :benchmark
                connections ::spatial/connects-to-node}
               buildings]
           {:id id
            :orig_id osm-id
            :name name
-           :type "demand"
+           :type "building"
            :subtype (if (or (nil? subtype) (= "" subtype)) nil subtype)
            :area area
-           :benchmark benchmark
-           :demand (* area benchmark)
            :connection_id (string/join "," connections)
            :geometry geometry})
 
@@ -145,26 +113,20 @@
                name :name
                subtype :subtype
                length ::spatial/length
-               unit-cost :unit-cost
                {start-id ::geoio/id} ::spatial/start-node
                {end-id ::geoio/id} ::spatial/end-node}
-              
               ways]
           {:id id
            :orig_id osm-id
            :type "path"
            :subtype (if (or (nil? subtype) (= "" subtype)) nil subtype)
            :length length
-           :unit-cost unit-cost
-           :cost (* length unit-cost)
            :start-id start-id
            :end-id end-id
            :geometry geometry}
           )
         ]
 
-    (def last-buildings buildings)
-    (def last-ways ways)
     (println "building subtypes" (frequencies (map :subtype buildings)))
 
     ;; TODO make CRS requirement for geoio, don't infer from SRID on geom
@@ -176,6 +138,56 @@
     (geoio/write-to {::geoio/features ways
                      ::geoio/crs "EPSG:4326"}
                     ways-out)))
+
+(def default-path-cost {:cost-per-m 500 :cost-per-kwm 20})
+
+(defn- path-cost-fn
+  "Construct a path cost model from a string.
+
+  If it names a file, assumed to be a CSV file with a subtype column
+  and cost-per-m and cost-per-kwm columns. Joins on these.
+  "
+  [path-costs]
+  (cond
+    (and path-costs (.exists (io/file path-costs)))
+    (let [path-costs (->> path-costs csv-file->map (assoc-by :subtype))]
+      (fn [x]
+        (select-keys (get path-costs (:subtype x)
+                          default-path-cost)
+                     [:cost-per-m :cost-per-kwm])))
+    :default (constantly default-path-cost)))
+
+(defn- demand-fn
+  "Construct a demand model from a string.
+  If the string names a json file, assumed to be a support-vector regression
+  "
+  [demands]
+  (cond
+    (and demands (.exists (io/file demands))
+         (.endsWith demands ".json"))
+    (let [model
+          (with-open [r (io/file demands)]
+            (svm/predictor (json/read r :key-fn keyword)))]
+      (fn [x]
+        {:demand-kwh-per-year (model x)})))
+  
+  :default (constantly {:demand 1000}))
+
+(defn- add-estimates [shapes-file output-file
+                      & {:key [path-costs demands]}]
+  (let [path-cost (path-cost-fn path-costs)
+        demand    (demand-fn demands)
+
+        add-estimate
+        (fn [thing]
+          (case (:type thing)
+            "path" (merge thing (path-cost thing))
+            "building" (merge thing (demand thing))
+            thing))
+        ]
+    (-> (geoio/read-from shapes-file)
+       (update ::geoio/features map add-estimate)
+       (geoio/write-to output-file))))
 
 (defn- add-lidar
   [shapes-file lidar-directory shapes-out]
@@ -266,27 +278,30 @@
       "overpass"
       (run-with-arguments
        connect-overpass
-       [[nil "--path-costs PATH-COSTS" "Road costs file"
-         :missing "A road costs file is required"
+       [[nil "--path-subtypes PATH-SUBTYPES" "A table mapping overpass highway to subtype"
+         :missing "A road subtype file is required"
          :validate [#(.exists (io/as-file %))
-                    "The path costs file must exist"]
-         ]
-        [nil "--benchmarks BENCHMARKS" "Benchmarks file"
-         :missing "A benchmarks file is required"
+                    "The path subtype file must exist"]]
+        
+        [nil "--building-subtypes BUILDING-SUBTYPES" "Building subtypes mapping file"
+         :missing "A building subtypes file is required"
          :validate [#(.exists (io/as-file %))
-                    "The benchmarks file must exist"]]
-        [nil "--default-path-cost DEFAULT-PATH-COST" "Cost of unknown road type"
-         :parse-fn #(Double/parseDouble %)
-         :default 1000]
-        [nil "--default-benchmark DEFAULT-BENCHMARK" "Unit demand of unknown building type"
-         :default 1000
-         :parse-fn #(Double/parseDouble %)]]
+                    "The building subtypes file must exist"]]]
+       
        #(if (= 3 (count %))
           [(file-exists (nth % 1))
            (file-not-exists (nth % 2))]
           ["Required arguments: <area name> <buildings output> <ways output>"])
        args)
 
+      "estimate"
+      (run-with-arguments
+       add-estimates
+       [[nil "--path-costs PATH-COSTS-TABLE"]
+        [nil "--demands DEMAND-MODEL"]]
+       #(if (not= 2 (count %))
+          ["Required arguments: <input file> <output file>"]))
+      
       "lidar"
       (run-with-arguments
        add-lidar
@@ -319,6 +334,6 @@
       
       
       (do (when com (println "Unknown command" com))
-          (println "Usage: <this command> overpass | lidar | node")))))
+          (println "Usage: <this command> overpass | lidar | node | estimate")))))
 
 
