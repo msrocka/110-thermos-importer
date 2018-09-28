@@ -33,7 +33,7 @@
       (doall (map zipmap header data)))))
 
 (defn- assoc-by [f s]
-  (reduce #(assoc %1 (f %2) %2)) {} s))
+  (reduce #(assoc %1 (f %2) %2)) {} s)
 
 (defn- connect-overpass [area-name buildings-out ways-out
                          & {:keys [path-subtypes
@@ -174,7 +174,7 @@
   :default (constantly {:demand 1000}))
 
 (defn- add-estimates [shapes-file output-file
-                      & {:key [path-costs demands]}]
+                      & {:keys [path-costs demands]}]
   (let [path-cost (path-cost-fn path-costs)
         demand    (demand-fn demands)
 
@@ -186,8 +186,8 @@
             thing))
         ]
     (-> (geoio/read-from shapes-file)
-       (update ::geoio/features map add-estimate)
-       (geoio/write-to output-file))))
+        (update ::geoio/features map add-estimate)
+        (geoio/write-to output-file))))
 
 (defn- add-lidar
   [shapes-file lidar-directory shapes-out]

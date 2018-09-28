@@ -3,8 +3,8 @@
             [thermos-importer.util :as util])
   (:import com.github.davidmoten.rtree.geometry.Geometries
            com.github.davidmoten.rtree.RTree
-           [com.vividsolutions.jts.geom Coordinate GeometryFactory Polygon]
-           [com.vividsolutions.jts.geom.util LineStringExtracter]
+           [org.locationtech.jts.geom Coordinate GeometryFactory Polygon]
+           [org.locationtech.jts.geom.util LineStringExtracter]
            org.geotools.coverage.grid.io.GridFormatFinder
            org.geotools.factory.Hints
            org.geotools.gce.geotiff.GeoTiffFormat

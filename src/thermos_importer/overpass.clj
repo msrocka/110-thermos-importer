@@ -15,7 +15,7 @@
            
            [org.geotools.geometry.jts JTSFactoryFinder]
            
-           [com.vividsolutions.jts.geom GeometryFactory Coordinate Polygon]))
+           [org.locationtech.jts.geom GeometryFactory Coordinate Polygon]))
 
 (def overpass-api "http://overpass-api.de/api/interpreter")
 
@@ -30,7 +30,7 @@
   out geom meta;" (pr-str area-name)))
 
 (def geometry-factory
-  (GeometryFactory. (com.vividsolutions.jts.geom.PrecisionModel.) 4326))
+  (GeometryFactory. (org.locationtech.jts.geom.PrecisionModel.) 4326))
 
 (defn- node->coordinate
   "Convert an OSM xml nd entity to a JTS coordinate object"

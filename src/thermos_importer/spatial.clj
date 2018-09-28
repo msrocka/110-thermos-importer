@@ -5,11 +5,11 @@
   (:import [com.github.davidmoten.rtree RTree]
            [com.github.davidmoten.rtree.geometry Geometries]
 
-           [com.vividsolutions.jts.geom PrecisionModel GeometryFactory Coordinate]
-           [com.vividsolutions.jts.operation.distance DistanceOp]
-           [com.vividsolutions.jts.noding
+           [org.locationtech.jts.geom PrecisionModel GeometryFactory Coordinate]
+           [org.locationtech.jts.operation.distance DistanceOp]
+           [org.locationtech.jts.noding
             MCIndexNoder NodedSegmentString IntersectionAdder]
-           [com.vividsolutions.jts.algorithm RobustLineIntersector]
+           [org.locationtech.jts.algorithm RobustLineIntersector]
 
            [org.geotools.geometry.jts JTS]
            [org.geotools.referencing CRS]

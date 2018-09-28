@@ -2,7 +2,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as string]
             [digest])
-  (:import [com.vividsolutions.jts.geom Geometry]
+  (:import [org.locationtech.jts.geom Geometry]
            [org.geotools.geojson.feature FeatureJSON]
            [org.geotools.geojson.geom GeometryJSON]
            [org.geotools.data FileDataStoreFinder DataUtilities]
@@ -98,25 +98,25 @@
     (format "%s:srid=%d"
             (or (and (= (count classes) 1)
                      (cond
-                       (classes com.vividsolutions.jts.geom.Polygon)
+                       (classes org.locationtech.jts.geom.Polygon)
                        "Polygon"
         
-                       (classes com.vividsolutions.jts.geom.Point)
+                       (classes org.locationtech.jts.geom.Point)
                        "Point"
 
-                       (classes com.vividsolutions.jts.geom.MultiPolygon)
+                       (classes org.locationtech.jts.geom.MultiPolygon)
                        "MultiPolygon"
                        
-                       (classes com.vividsolutions.jts.geom.MultiPoint)
+                       (classes org.locationtech.jts.geom.MultiPoint)
                        "MultiPoint"
                        
-                       (classes com.vividsolutions.jts.geom.MultiLineString)
+                       (classes org.locationtech.jts.geom.MultiLineString)
                        "MultiLineString"
                        
-                       (classes com.vividsolutions.jts.geom.GeometryCollection)
+                       (classes org.locationtech.jts.geom.GeometryCollection)
                        "GeometryCollection"
 
-                       (classes com.vividsolutions.jts.geom.LineString)
+                       (classes org.locationtech.jts.geom.LineString)
                        "LineString"))
               "Geometry")
             srid)))
