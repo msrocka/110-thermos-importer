@@ -48,8 +48,8 @@
           (do
             (println "  *" raster)
             {:raster raster
-            :bounds (get-raster-bounds raster)
-            :crs (get-raster-crs raster)}))
+             :bounds (get-raster-bounds raster)
+             :crs (get-raster-crs raster)}))
 
         by-crs                          ; bin them by CRS
         (group-by :crs properties)
@@ -88,14 +88,17 @@
 
 (defn- summarise
   "Approximately summarise the building from this set of x/y/z values."
-  [shape coords]
+  [shape coords ground-level-threshold]
   (when-not (empty? coords)
     (let [perimeter (.getLength shape)
 
           heights (map last coords)
-          heights (filter #(> % -5) heights)
+          heights (filter #(> % ground-level-threshold) heights)
           
-          ground (apply min heights)
+          ground (if (seq heights)
+                   (apply min heights)
+                   0)
+          
           heights (map #(- % ground) heights)
 
           heights (filter #(> % 0.5) heights)
@@ -112,6 +115,7 @@
       
       {::perimeter perimeter
        ::footprint footprint
+       ::ground-height ground
        ::height mean-height
        })))
 
@@ -123,8 +127,8 @@
 
   http://mathworld.wolfram.com/TrianglePointPicking.html
   "
-  [shape]
-  (let [shape (.buffer shape 1.5)
+  [shape buffer-size]
+  (let [shape (.buffer shape buffer-size)
         
         envelope (.getEnvelopeInternal shape)
         x-min (.getMinX envelope)
@@ -148,53 +152,61 @@
   ::surface-area
   ::volume
   ::floor-area"
-  [tree shape]
+  [tree shape buffer-size ground-level-threshold]
 
   (let [rect (util/geom->rect shape)
         rasters (find-rasters tree rect)
-        grid    (grid-over shape)
+        grid    (grid-over shape buffer-size)
         coords  (mapcat #(sample-coords % grid) rasters)]
-    (summarise shape coords)))
+    (summarise shape coords ground-level-threshold)))
 
 (defn estimate-party-walls [features]
   (println "Estimating party walls...")
   (let [index (util/index-features features)]
     (for [feature features]
-      (let [geom (::geoio/geometry feature)
-            rect (util/geom->rect geom)
-            neighbours (util/search-rtree index rect)
-            perimeter (.getLength geom)
+      (try
+        (let [geom (::geoio/geometry feature)
+              rect (util/geom->rect geom)
+              neighbours (util/search-rtree index rect)
+              perimeter (.getLength geom)
 
-            boundary (.getBoundary geom)
+              boundary (.getBoundary geom)
 
-            inter-bounds (for [n neighbours :when (not= n feature)]
-                           (let [n-boundary (.getBoundary (::geoio/geometry n))]
-                             (LineStringExtracter/getGeometry
-                              (.intersection boundary n-boundary))))
-            
-            ]
-        (if (seq inter-bounds)
-          (let [party-bounds (reduce
-                              (fn [a b] (.union a b))
-                              inter-bounds)
-                party-perimeter (.getLength party-bounds)
+              inter-bounds (for [n neighbours :when (not= n feature)]
+                             (let [n-boundary (.getBoundary (::geoio/geometry n))]
+                               (LineStringExtracter/getGeometry
+                                (.intersection boundary n-boundary))))
+              
+              ]
+          (if (seq inter-bounds)
+            (let [party-bounds (reduce
+                                (fn [a b] (.union a b))
+                                inter-bounds)
+                  party-perimeter (.getLength party-bounds)
 
-                party-perimeter-proportion (/ party-perimeter perimeter)]
-            (assoc feature ::shared-perimeter party-perimeter-proportion))
-          feature)))))
+                  party-perimeter-proportion (/ party-perimeter perimeter)]
+              (assoc feature ::shared-perimeter party-perimeter-proportion))
+            feature))
+        (catch Exception e
+          (printf
+           "Error computing party walls for %s: %s\n"
+           (dissoc feature ::geoio/geometry)
+           (.getMessage e))
+          feature
+          )))))
 
 (defn add-lidar-to-shapes
-  "Given a list of `rasters` and a `shapes`, which is a geoio feature thingy
-  i.e. a map with ::geoio/crs and ::geoio/features in it
+  "Given a raster index from `rasters->index` and a `shapes`, which is a
+  geoio feature thingy i.e. a map with ::geoio/crs
+  and ::geoio/features in it
 
   return an updated `shapes`, in which the features have
   got ::lidar/surface-area etc. from shape->dimensions."
-  [rasters shapes]
-  (let [index (rasters->index rasters)
-        shapes-crs (::geoio/crs shapes)
-
-        shapes (update shapes ::geoio/features estimate-party-walls)
-        ]
+  [shapes index {:keys [buffer-size ground-level-threshold]
+                 :or {buffer-size 1.5 ground-level-threshold -5}
+                 }]
+  (let [shapes-crs (::geoio/crs shapes)
+        shapes (update shapes ::geoio/features estimate-party-walls)]
 
     (reduce
      (fn [shapes [raster-crs raster-tree]]
@@ -214,11 +226,23 @@
                    (util/seq-counter
                     (for [feature %]
                       (merge feature
-                             (shape->dimensions
-                              raster-tree
-                              (JTS/transform
-                               (::geoio/geometry feature)
-                               transform))))
+                             (try
+                               (shape->dimensions
+                                raster-tree
+                                (JTS/transform
+                                 (::geoio/geometry feature)
+                                 transform)
+                                
+                                buffer-size
+                                ground-level-threshold)
+                               
+                               (catch Exception e
+                                 (printf
+                                  "Error in adding lidar data to %s: %s\n"
+                                  (dissoc feature ::geoio/geometry)
+                                  (.getMessage e))
+                                 {}))))
+                    
                     500
                     (fn [n] (let [now (System/currentTimeMillis)
                                   ds (/ (- now @start) 1000.0)

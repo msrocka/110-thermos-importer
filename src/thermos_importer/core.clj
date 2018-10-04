@@ -186,22 +186,63 @@
             thing))
         ]
     (-> (geoio/read-from shapes-file)
-        (update ::geoio/features map add-estimate)
+        (update ::geoio/features #(map add-estimate %))
         (geoio/write-to output-file))))
 
-(defn- add-lidar
-  [shapes-file lidar-directory shapes-out]
+(defn- explode-multipolygons [shapes]
+  (let [explode-geometry
+        (fn [thing]
+          (case (::geoio/type thing)
+            :multi-polygon
+            (let [geom (::geoio/geometry thing)]
+              (for [n (range (.getNumGeometries geom))]
+                (assoc thing ::geoio/geometry (.getGeometryN thing n))))
+            
+            [thing]))]
+    (update shapes
+            ::geoio/features
+            #(mapcat explode-geometry %))))
 
-  (let [shapes (geoio/read-from shapes-file)
+(defn- add-lidar
+  [shapes lidar-directory shapes-out &
+   {:keys [buffer-size ground-level-threshold]
+    :or {buffer-size 1.5 ground-level-threshold -5}}]
+
+  (let [shape-files (->> (file-seq (io/file shapes))
+                         (filter #(and (.isFile %)
+                                       (.endsWith (.getName %) ".shp"))))
         
         lidar-files (->> (file-seq (io/file lidar-directory))
                          (filter #(and (.isFile %)
                                        (or (.endsWith (.getName %) ".tif")
                                            (.endsWith (.getName %) ".tiff")))))
-        
-        shapes (lidar/add-lidar-to-shapes lidar-files shapes)]
 
-    (geoio/write-to shapes shapes-out)))
+        lidar-index (lidar/rasters->index lidar-files)
+
+        output-location (io/file shapes-out)
+
+        get-output-path
+        (fn [input-file]
+          (io/file output-location (.replaceAll (.getName input-file)
+                                                "\\.shp$"
+                                                ".geojson")))
+        ]
+    
+    (when (not (.exists output-location))
+      (.mkdirs output-location)
+      (printf "creating output directory %s\n" output-location))
+    
+    (doseq [shape-file shape-files]
+      (let [output-path (get-output-path shape-file)]
+        (-> shape-file
+            (geoio/read-from)
+            (explode-multipolygons)
+            (lidar/add-lidar-to-shapes
+             lidar-index
+             :buffer-size buffer-size
+             :ground-level-threshold ground-level-threshold)
+            (geoio/write-to output-path)))))
+  )
 
 (defn- just-node
   [ways-file buildings-file
@@ -272,6 +313,11 @@
   (when (.exists (io/as-file file))
     (format "file %s already exists" file)))
 
+(defn directory-or-missing [file]
+  (when (and (.exists (io/as-file file))
+             (.isFile (io/as-file file)))
+    (format "file %s already exists and is not a directory" file)))
+
 (defn -main [& args]
   (let [[com & args] args]
     (case com
@@ -305,12 +351,20 @@
       "lidar"
       (run-with-arguments
        add-lidar
-       []
+       [[nil "--buffer-size BUFFER-SIZE"
+         :parse-fn #(Double/parseDouble %)
+         :default 1.5]
+        [nil "--ground-level-threshold THRESHOLD"
+         :parse-fn #(Double/parseDouble %)
+         :default -5.0
+         ]]
+       
        #(if (= 3 (count %))
           [(file-exists (nth % 0))
            (file-exists (nth % 1))
-           (file-not-exists (nth % 2))]
-          ["Required arguments: <shapefile in> <lidar directory> <shapefile out>"])
+           (directory-or-missing (nth % 2))
+           ]
+          ["Required arguments: <shapefile|directory in> <lidar directory> <shapefile|directory out>"])
        args)
 
       "node"
