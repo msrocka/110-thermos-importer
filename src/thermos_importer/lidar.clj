@@ -42,11 +42,12 @@
   "
   [rasters]
   (println "Indexing rasters...")
-
+  
   (let [properties                      ; first lookup the properties for each raster
         (for [raster rasters]
           (do
-            (println "  *" raster)
+            (printf "-> %s\r" (.getName raster))
+            (flush)
             {:raster raster
              :bounds (get-raster-bounds raster)
              :crs (get-raster-crs raster)}))
@@ -73,7 +74,9 @@
   "Sample coordinates within shape from raster.
   Presumes coords are in the raster's CRS."
   [raster coords]
-  (let [raster (load-raster raster)]
+  (let [raster (load-raster raster)
+        no-data (set (.getNoDataValues (.getSampleDimension raster 0)))]
+    
     (filter
      identity
      (for [[x y] coords]
@@ -84,12 +87,13 @@
                     (catch org.opengis.coverage.PointOutsideCoverageException e
                       nil)
                     )]
-         (when z [x y z]))))))
+         (when (and z (not (no-data z)))
+           [x y z]))))))
 
 (defn- summarise
   "Approximately summarise the building from this set of x/y/z values."
   [shape coords ground-level-threshold]
-  (when-not (empty? coords)
+  (if (not (empty? coords))
     (let [perimeter (.getLength shape)
 
           heights (map last coords)
@@ -117,7 +121,9 @@
        ::footprint footprint
        ::ground-height ground
        ::height mean-height
-       })))
+       ::num-samples (count heights)
+       })
+    {::num-samples 0}))
 
 (defn- grid-over
   "Make a seq of coordinates covering the SHAPE with a buffer of 1m
@@ -202,18 +208,14 @@
 
   return an updated `shapes`, in which the features have
   got ::lidar/surface-area etc. from shape->dimensions."
-  [shapes index {:keys [buffer-size ground-level-threshold]
-                 :or {buffer-size 1.5 ground-level-threshold -5}
-                 }]
+  [shapes index & {:keys [buffer-size ground-level-threshold]
+                   :or {buffer-size 1.5 ground-level-threshold -5}
+                   }]
+  
   (let [shapes-crs (::geoio/crs shapes)
         shapes (update shapes ::geoio/features estimate-party-walls)]
-
     (reduce
      (fn [shapes [raster-crs raster-tree]]
-       (printf "Raster CRS: %s, geometry CRS: %s"
-               raster-crs
-               shapes-crs)
-       
        (let [transform (CRS/findMathTransform
                         (CRS/decode shapes-crs true)
                         (CRS/decode raster-crs))
@@ -238,7 +240,7 @@
                                
                                (catch Exception e
                                  (printf
-                                  "Error in adding lidar data to %s: %s\n"
+                                  "Error adding lidar data to %s: %s\n"
                                   (dissoc feature ::geoio/geometry)
                                   (.getMessage e))
                                  {}))))

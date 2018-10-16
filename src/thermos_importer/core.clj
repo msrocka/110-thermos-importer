@@ -233,7 +233,9 @@
       (printf "creating output directory %s\n" output-location))
     
     (doseq [shape-file shape-files]
-      (let [output-path (get-output-path shape-file)]
+      (let [output-path (get-output-path shape-file)
+            ]
+        (printf "%s -> %s\n" shape-file output-path)
         (-> shape-file
             (geoio/read-from)
             (explode-multipolygons)
@@ -319,75 +321,77 @@
     (format "file %s already exists and is not a directory" file)))
 
 (defn -main [& args]
-  (let [[com & args] args]
-    (case com
-      "overpass"
-      (run-with-arguments
-       connect-overpass
-       [[nil "--path-subtypes PATH-SUBTYPES" "A table mapping overpass highway to subtype"
-         :missing "A road subtype file is required"
-         :validate [#(.exists (io/as-file %))
-                    "The path subtype file must exist"]]
+  
+  (binding [*out* *err*]
+    (let [[com & args] args]
+      (case com
+        "overpass"
+        (run-with-arguments
+         connect-overpass
+         [[nil "--path-subtypes PATH-SUBTYPES" "A table mapping overpass highway to subtype"
+           :missing "A road subtype file is required"
+           :validate [#(.exists (io/as-file %))
+                      "The path subtype file must exist"]]
+          
+          [nil "--building-subtypes BUILDING-SUBTYPES" "Building subtypes mapping file"
+           :missing "A building subtypes file is required"
+           :validate [#(.exists (io/as-file %))
+                      "The building subtypes file must exist"]]]
+         
+         #(if (= 3 (count %))
+            [(file-exists (nth % 1))
+             (file-not-exists (nth % 2))]
+            ["Required arguments: <area name> <buildings output> <ways output>"])
+         args)
+
+        "estimate"
+        (run-with-arguments
+         add-estimates
+         [[nil "--path-costs PATH-COSTS-TABLE"]
+          [nil "--demands DEMAND-MODEL"]]
+         #(if (not= 2 (count %))
+            ["Required arguments: <input file> <output file>"]))
         
-        [nil "--building-subtypes BUILDING-SUBTYPES" "Building subtypes mapping file"
-         :missing "A building subtypes file is required"
-         :validate [#(.exists (io/as-file %))
-                    "The building subtypes file must exist"]]]
-       
-       #(if (= 3 (count %))
-          [(file-exists (nth % 1))
-           (file-not-exists (nth % 2))]
-          ["Required arguments: <area name> <buildings output> <ways output>"])
-       args)
+        "lidar"
+        (run-with-arguments
+         add-lidar
+         [[nil "--buffer-size BUFFER-SIZE"
+           :parse-fn #(Double/parseDouble %)
+           :default 1.5]
+          [nil "--ground-level-threshold THRESHOLD"
+           :parse-fn #(Double/parseDouble %)
+           :default -5.0
+           ]]
+         
+         #(if (= 3 (count %))
+            [(file-exists (nth % 0))
+             (file-exists (nth % 1))
+             (directory-or-missing (nth % 2))
+             ]
+            ["Required arguments: <shapefile|directory in> <lidar directory> <shapefile|directory out>"])
+         args)
 
-      "estimate"
-      (run-with-arguments
-       add-estimates
-       [[nil "--path-costs PATH-COSTS-TABLE"]
-        [nil "--demands DEMAND-MODEL"]]
-       #(if (not= 2 (count %))
-          ["Required arguments: <input file> <output file>"]))
-      
-      "lidar"
-      (run-with-arguments
-       add-lidar
-       [[nil "--buffer-size BUFFER-SIZE"
-         :parse-fn #(Double/parseDouble %)
-         :default 1.5]
-        [nil "--ground-level-threshold THRESHOLD"
-         :parse-fn #(Double/parseDouble %)
-         :default -5.0
-         ]]
-       
-       #(if (= 3 (count %))
-          [(file-exists (nth % 0))
-           (file-exists (nth % 1))
-           (directory-or-missing (nth % 2))
-           ]
-          ["Required arguments: <shapefile|directory in> <lidar directory> <shapefile|directory out>"])
-       args)
-
-      "node"
-      (run-with-arguments
-       just-node
-       [[nil "--omit-field FIELD" "Leave out the given field"
-         :id :omit-fields
-         :assoc-fn
-         (fn [m k v]
-           (update m k conj v))]
-        [nil "--chunk-size CHUNK-SIZE" "Make geojson into chunks of this size"
-         :parse-fn #(Integer/parseInt %)]]
-       #(if (= 4 (count %))
-          [(file-exists (nth % 0))
-           (file-exists (nth % 1))
-           (file-not-exists (nth % 2))
-           (file-not-exists (nth % 3))
-           ]
-          ["Required arguments: <ways input> <buildings input> <ways output> <buildings output>"])
-       args)
-      
-      
-      (do (when com (println "Unknown command" com))
-          (println "Usage: <this command> overpass | lidar | node | estimate")))))
+        "node"
+        (run-with-arguments
+         just-node
+         [[nil "--omit-field FIELD" "Leave out the given field"
+           :id :omit-fields
+           :assoc-fn
+           (fn [m k v]
+             (update m k conj v))]
+          [nil "--chunk-size CHUNK-SIZE" "Make geojson into chunks of this size"
+           :parse-fn #(Integer/parseInt %)]]
+         #(if (= 4 (count %))
+            [(file-exists (nth % 0))
+             (file-exists (nth % 1))
+             (file-not-exists (nth % 2))
+             (file-not-exists (nth % 3))
+             ]
+            ["Required arguments: <ways input> <buildings input> <ways output> <buildings output>"])
+         args)
+        
+        
+        (do (when com (println "Unknown command" com))
+            (println "Usage: <this command> overpass | lidar | node | estimate"))))))
 
 
