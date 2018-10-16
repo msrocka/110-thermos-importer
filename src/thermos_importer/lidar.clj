@@ -213,7 +213,16 @@
                    }]
   
   (let [shapes-crs (::geoio/crs shapes)
-        shapes (update shapes ::geoio/features estimate-party-walls)]
+        empty-fields {::perimeter nil
+                      ::footprint nil
+                      ::ground-height nil
+                      ::height nil
+                      ::num-samples nil
+                      ::shared-perimeter nil
+                      }
+        shapes (update shapes ::geoio/features (partial into [] (map #(merge % empty-fields))))
+        shapes (update shapes ::geoio/features estimate-party-walls)
+        ]
     (reduce
      (fn [shapes [raster-crs raster-tree]]
        (let [transform (CRS/findMathTransform
@@ -228,6 +237,7 @@
                    (util/seq-counter
                     (for [feature %]
                       (merge feature
+
                              (try
                                (shape->dimensions
                                 raster-tree
