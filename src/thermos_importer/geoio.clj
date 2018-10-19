@@ -174,7 +174,9 @@
 
         fields (or fields (infer-fields epsg data))
 
-        geo-writer (FeatureJSON. (GeometryJSON. 8))
+        geo-writer (let [x (FeatureJSON. (GeometryJSON. 8))]
+                     (.setEncodeNullValues x true)
+                     x)
 
         ;; we need a type descriptor for geotools to be happy:
         type

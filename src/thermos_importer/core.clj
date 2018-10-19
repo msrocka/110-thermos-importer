@@ -10,7 +10,6 @@
             [clojure.string :as string]
             [clojure.pprint :refer [pprint]]
             [clojure.data.csv :as csv]
-
             [clojure.set :as set]
             [clojure.data.json :as json]))
 
@@ -321,7 +320,6 @@
     (format "file %s already exists and is not a directory" file)))
 
 (defn -main [& args]
-  
   (binding [*out* *err*]
     (let [[com & args] args]
       (case com
@@ -339,7 +337,7 @@
                       "The building subtypes file must exist"]]]
          
          #(if (= 3 (count %))
-            [(file-exists (nth % 1))
+            [(file-not-exists (nth % 1))
              (file-not-exists (nth % 2))]
             ["Required arguments: <area name> <buildings output> <ways output>"])
          args)
