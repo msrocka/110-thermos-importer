@@ -1,7 +1,8 @@
 (ns thermos-importer.geoio
   (:require [clojure.java.io :as io]
             [clojure.string :as string]
-            [digest])
+            [digest]
+            [thermos-importer.util :as util])
   (:import [org.locationtech.jts.geom Geometry]
            [org.geotools.geojson.feature FeatureJSON]
            [org.geotools.geojson.geom GeometryJSON]
@@ -54,12 +55,45 @@
         identity (geometry->id geometry)
         type (geometry-type geometry)
         other-fields (feature-attributes feature)]
-    (merge other-fields {::geometry geometry ::type type ::id identity})))
+    (merge (dissoc other-fields :geometry)
+           {::geometry geometry ::type type ::id identity})))
 
 (defn geom->map [geom]
   {::geometry geom
    ::type (geometry-type geom)
    ::id (geometry->id geom)})
+
+(defn- read-from-store [store]
+  (.setCharset store (StandardCharsets/UTF_8))
+  (let [feature-source (->> store .getTypeNames first (.getFeatureSource store))
+        crs (-> feature-source .getInfo .getCRS)
+        crs-id (CRS/lookupIdentifier crs true)
+
+        features (try
+                   (doall
+                    (for [feature (->> feature-source
+                                       .getFeatures
+                                       .features
+                                       feature-iterator-seq)]
+                      (feature->map feature)))
+                   (finally (.dispose store)))]
+    {::features features ::crs crs-id}))
+
+(defn- read-from-geojson [filename]
+  (let [io (FeatureJSON.)
+        crs-id (try (CRS/lookupIdentifier (.readCRS io filename) true)
+                 (catch Exception e
+                   (println "Error reading CRS from" filename)
+                   "EPSG:4326"))
+
+        feature-collection (.readFeatureCollection io filename)
+
+        features (doall
+                  (for [feature (->> feature-collection
+                                     .features
+                                     feature-iterator-seq)]
+                    (feature->map feature)))]
+    {::features features ::crs crs-id}))
 
 (defn read-from
   "Load some geospatial data into a format we like.
@@ -72,25 +106,18 @@
   "
   [filename]
 
-  (let [store (FileDataStoreFinder/getDataStore (io/as-file filename))
-        
-        _ (.setCharset store (StandardCharsets/UTF_8))
+  (let [store (FileDataStoreFinder/getDataStore (io/as-file filename))]
+    (cond
+      store
+      (read-from-store store)
 
-        feature-source (->> store .getTypeNames first (.getFeatureSource store))
-        crs (-> feature-source .getInfo .getCRS)
-        crs-id (CRS/lookupIdentifier crs true)
+      (.endsWith (.getName filename) ".json")
+      (read-from-geojson filename)
 
-        features (try
-                   (doall
-                    (for [feature (->> feature-source
-                                       .getFeatures
-                                       .features
-                                       feature-iterator-seq)]
-                      (feature->map feature)))
-                   (finally (.dispose store)))
-        ]
-    {::features features ::crs crs-id}
-    ))
+      :otherwise
+      (throw (Exception. (str "Unable to read features from " filename)))
+      )))
+
 
 (defn geometry-field-type [srid values]
   (let [srid (or srid (.getSRID (first values)))
@@ -140,15 +167,20 @@
       (string? value)
       {:type "String" :value get-value}
 
+      (boolean? value)
+      {:type "Boolean" :value get-value}
+      
       :otherwise
       nil)))
 
 (defn clean-key-for-output [key]
-  (let [s (str key)]
-    (.. s
-        (toLowerCase)
-        (replaceAll "^:" "")
-        (replaceAll "[^0-9a-z]+" "_"))))
+  (if (= key ::geometry)
+    "geometry"
+    (let [s (str key)]
+      (.. s
+          (toLowerCase)
+          (replaceAll "^:" "")
+          (replaceAll "[^0-9a-z]+" "_")))))
 
 (defn infer-fields [srid data]
   (let [all-keys (set (mapcat keys data))]
@@ -176,6 +208,7 @@
 
         geo-writer (let [x (FeatureJSON. (GeometryJSON. 8))]
                      (.setEncodeNullValues x true)
+                     (.setEncodeFeatureCollectionCRS x true)
                      x)
 
         ;; we need a type descriptor for geotools to be happy:
@@ -217,3 +250,23 @@
       (write-chunk filename data)
       )
     ))
+
+(defn update-features [m tag f & args]
+  (update m ::features
+          #(let [start (System/currentTimeMillis)
+                 total (count %)]
+             (util/seq-counter
+              (for [feature %] (apply f feature args))
+              (int (/ total 20))
+              (fn [n]
+                (let [now (System/currentTimeMillis)
+                      delta (- now start)]
+                  (when (> delta 5000)
+                    (printf "\r%s [%s%%, %.1fm]"
+                            tag
+                            (int (/ (* 100 n) total))
+                            (float (/ (* (- total n)
+                                         (/ delta n))
+                                      60000)))
+                    (flush))))))))
+

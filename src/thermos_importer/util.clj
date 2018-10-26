@@ -1,5 +1,4 @@
 (ns thermos-importer.util
-  (:require [thermos-importer.geoio :as geoio])
   (:import com.github.davidmoten.rtree.geometry.Geometries
            com.github.davidmoten.rtree.RTree))
 
@@ -35,7 +34,7 @@
 (defn index-features [features]
   (reduce
    (fn [tree feature]
-     (let [box (geom->rect (::geoio/geometry feature))]
+     (let [box (geom->rect (:thermos-importer.geoio/geometry feature))]
        (.add tree feature box)))
    
    (RTree/create)

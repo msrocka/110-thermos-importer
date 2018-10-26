@@ -17,7 +17,8 @@
            
            [org.locationtech.jts.geom GeometryFactory Coordinate Polygon]))
 
-(def overpass-api "http://overpass-api.de/api/interpreter")
+(def default-overpass-api "http://overpass-api.de/api/interpreter")
+  ;;"http://overpass-api.de/api/interpreter")
 
 (defn query-name [area-name]
   (format "(area[name=%s];)->.a;
@@ -155,17 +156,18 @@
         ]
     (assoc feature :subtype subtype)))
 
-(defn query-overpass [query]
-  (-> (http/post overpass-api
-                 {:as :stream
-                  :body (str "data=" (URLEncoder/encode query "UTF-8"))})
-      (deref)
-      (:body)
-      (xml/parse)
-      (:content)))
+(defn query-overpass [query & {:keys [overpass-api]}]
+  (let [query-body (str "data=" (URLEncoder/encode query "UTF-8"))
+        result (http/post (or overpass-api default-overpass-api)
+                          {:as :stream :body query-body})]
+    (println "Status" (:status result))
+    (-> result
+        (:body)
+        (xml/parse)
+        (:content))))
 
-(defn get-geometry [area-name]
-  (let [oxml (query-overpass (query-name area-name))
+(defn get-geometry [area-name & {:keys [overpass-api]}]
+  (let [oxml (query-overpass (query-name area-name) :overpass-api overpass-api)
 
         objects
         (keep

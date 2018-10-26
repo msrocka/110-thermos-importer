@@ -1,7 +1,8 @@
 (ns thermos-importer.svm-predict
   (:require [clojure.data.json :as json]
             [clojure.data.csv :as csv]
-            [clojure.java.io :as io]))
+            [clojure.java.io :as io]
+            [clojure.set :as set]))
 
 (defn- transpose-map-of-lists [x]
   (map (fn [m] (zipmap (keys x) m)) (apply map vector (vals x))))
@@ -33,8 +34,12 @@
       (fn [m k v]
         (let [offset (get offsets k 0)
               factor (get factors k 1)
-              result (/ (- v offset) factor)
-              ]
+              result (cond
+                       (number? v)
+                       (/ (- v offset) factor)
+                       (boolean? v)
+                       (/ (- (if v 1 0) offset) factor)
+                       :otherwise v)]
           
           (assoc m k result)))
       {}
@@ -64,16 +69,29 @@
         kernel (kernel-fn json)
         
         offset (:offset json)
+
+        has-required-keys (fn [x] (every? (comp not nil? x) key-order))
         ]
 
+    (println "predictor keys:" key-order)
+
     (fn [val]
-      (let [val (scale-inputs val)
-            val (map->sv val)
-            result (reduce + (map (fn [^double a sv]
-                                    (* a (kernel sv val))) alpha svs))
-            result (- result offset)
-            ]
-        (scale-output result)))))
+      (when (has-required-keys val)
+        (let [val (scale-inputs val)
+              val (map->sv val)
+              result (reduce + (map (fn [^double a sv]
+                                      (* a (kernel sv val))) alpha svs))
+              result (- result offset)
+              result (scale-output result)
+              ]
+          result)))))
+
+
+(defn load-predictor [file]
+  (with-open [r (io/reader file)]
+    (predictor (json/read r :key-fn keyword))))
+
+
 
 ;; (def some-json (json/read-str (slurp "/home/hinton/temp/svm.json") :key-fn keyword))
 ;; (def p (predictor some-json))

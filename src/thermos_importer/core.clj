@@ -27,63 +27,88 @@
     (let [rows (csv/read-csv reader)
           header (repeat (map keyword (first rows)))
           data (rest rows)
-          data (map data (partial map try-parse-double))
           ]
       (doall (map zipmap header data)))))
 
-(defn- assoc-by [f s]
-  (reduce #(assoc %1 (f %2) %2)) {} s)
+(defn- assoc-by [s f]
+  (reduce #(assoc %1 (f %2) %2)  {} s))
 
 (defn- connect-overpass [area-name buildings-out ways-out
                          & {:keys [path-subtypes
-                                   building-subtypes]}
+                                   building-subtypes
+                                   resi-subtypes
+                                   overpass-api
+                                   ]}
                          ]
   (let [path-subtypes
         (if path-subtypes
           (-> path-subtypes
               csv-file->map
-              assoc-by :highway)
+              (assoc-by :highway))
           {})
 
         building-subtypes
         (if building-subtypes
-          (-> path-subtypes
+          (-> building-subtypes
               csv-file->map
-              assoc-by :building)
+              (assoc-by :building))
           {})
 
+        resi-subtypes
+        (set
+         (when resi-subtypes
+           (with-open [r (io/reader resi-subtypes)]
+             (doall (line-seq r)))))
+
+        is-resi-subtype
+        (fn [x] (if (or (string/blank? x)
+                        (resi-subtypes x))
+                  true
+                  false))
+                
+        add-residential-field
+        (fn [input]
+          (assoc input :residential
+                 (is-resi-subtype (:subtype input))))
+                
         update-subtype
         (fn [m {st :subtype :as thing}]
           (assoc thing
-                 :subtype (or (get m st) st)))
+                 :subtype (or (:subtype (get m st)) st)))
 
         crs "EPSG:4326"
 
         _ (println "Querying overpass")
         
-        query-results (overpass/get-geometry area-name)
+        query-results (overpass/get-geometry area-name
+                                             :overpass-api overpass-api)
 
+        _ (println "Processing results")
+        
         ;; split into buildings and ways
         {ways :line-string buildings :polygon}
         (group-by ::geoio/type query-results)
 
         buildings (filter :building buildings)
 
-        _ (println (count ways) "ways" (count buildings) "buildings")
-
+        raw-building-types (frequencies (map :subtype buildings))
+        raw-way-types (frequencies (map :subtype ways))
+        
         ways
         (spatial/node-paths ways)
-        
-        _ (println (count ways) "noded ways")
         
         [buildings ways]
         (spatial/add-connections crs buildings ways)
 
-        _ (println (count ways) "connected ways")
-        
+        ;; recode road types
         ways
         (map (partial update-subtype path-subtypes) ways)
 
+        ;; determine resi status for buildings
+        buildings
+        (map add-residential-field buildings)
+        
+        ;; recode building types
         buildings
         (map (partial update-subtype building-subtypes) buildings)
         
@@ -94,12 +119,14 @@
                name :name
                subtype :subtype
                area ::spatial/area
+               resi :residential
                connections ::spatial/connects-to-node}
               buildings]
           {:id id
            :orig_id osm-id
            :name name
            :type "building"
+           :residential resi
            :subtype (if (or (nil? subtype) (= "" subtype)) nil subtype)
            :area area
            :connection_id (string/join "," connections)
@@ -125,11 +152,21 @@
            :geometry geometry}
           )
         ]
-
-    (println "building subtypes" (frequencies (map :subtype buildings)))
-
     ;; TODO make CRS requirement for geoio, don't infer from SRID on geom
     ;; as that is not reliable.
+
+    (println "Building types:")
+    (doseq [[k v] raw-building-types]
+      (println k v))
+    (println)
+    
+    (println "Way types:")
+    (doseq [[k v] raw-way-types]
+      (println k v))
+
+    (println "Resi count:")
+    (println (frequencies (map :residential buildings)))
+    (println)
     
     (geoio/write-to {::geoio/features buildings
                      ::geoio/crs "EPSG:4326"}
@@ -138,55 +175,34 @@
                      ::geoio/crs "EPSG:4326"}
                     ways-out)))
 
-(def default-path-cost {:cost-per-m 500 :cost-per-kwm 20})
+(defn- run-demand-model [input-file output-file
+                         & {:keys [demand-model peak-model]
+                            :or {peak-model [0.0004963 21.84]}
+                            }]
+  (let [peak-m (first peak-model)
+        peak-c (second peak-model)
 
-(defn- path-cost-fn
-  "Construct a path cost model from a string.
+        demand-models
+        (doall (for [filename demand-model]
+                 (with-open [r (io/reader filename)]
+                   (svm/predictor (json/read r :key-fn keyword)))))
 
-  If it names a file, assumed to be a CSV file with a subtype column
-  and cost-per-m and cost-per-kwm columns. Joins on these.
-  "
-  [path-costs]
-  (cond
-    (and path-costs (.exists (io/file path-costs)))
-    (let [path-costs (->> path-costs csv-file->map (assoc-by :subtype))]
-      (fn [x]
-        (select-keys (get path-costs (:subtype x)
-                          default-path-cost)
-                     [:cost-per-m :cost-per-kwm])))
-    :default (constantly default-path-cost)))
-
-(defn- demand-fn
-  "Construct a demand model from a string.
-  If the string names a json file, assumed to be a support-vector regression
-  "
-  [demands]
-  (cond
-    (and demands (.exists (io/file demands))
-         (.endsWith demands ".json"))
-    (let [model
-          (with-open [r (io/file demands)]
-            (svm/predictor (json/read r :key-fn keyword)))]
-      (fn [x]
-        {:demand-kwh-per-year (model x)})))
-  
-  :default (constantly {:demand 1000}))
-
-(defn- add-estimates [shapes-file output-file
-                      & {:keys [path-costs demands]}]
-  (let [path-cost (path-cost-fn path-costs)
-        demand    (demand-fn demands)
-
-        add-estimate
-        (fn [thing]
-          (case (:type thing)
-            "path" (merge thing (path-cost thing))
-            "building" (merge thing (demand thing))
-            thing))
-        ]
-    (-> (geoio/read-from shapes-file)
-        (update ::geoio/features #(map add-estimate %))
-        (geoio/write-to output-file))))
+        add-demand-estimate
+        (fn [feature]
+          ;; find first demand model which will work, or log an error
+          (let [estimates (map #(% feature) demand-models)
+                estimate (first (filter identity estimates))
+                peak-estimate (when estimate (+ peak-c (* peak-m estimate)))]
+            (when-not estimate
+              (println "No estimator worked for" (dissoc feature ::geoio/geometry)))
+            
+            (assoc feature
+                   :demand-kwh-per-year estimate
+                   :demand-kwp peak-estimate)))]
+    
+    (-> (geoio/read-from (io/file input-file))
+        (geoio/update-features :add-demand-estimate add-demand-estimate)
+        (geoio/write-to (io/file output-file)))))
 
 (defn- explode-multipolygons [shapes]
   (let [explode-geometry
@@ -204,12 +220,20 @@
 
 (defn- add-lidar
   [shapes lidar-directory shapes-out &
-   {:keys [buffer-size ground-level-threshold]
+   {:keys [buffer-size ground-level-threshold storey-height volume-tiles]
     :or {buffer-size 1.5 ground-level-threshold -5}}]
 
-  (let [shape-files (->> (file-seq (io/file shapes))
+  (let [volume-tiles
+        (sort
+         (when volume-tiles
+           (for [{volume :volume percentile :percentile}
+                 (csv-file->map volume-tiles)]
+             [(Double/parseDouble volume) (Double/parseDouble percentile)])))
+
+        shape-files (->> (file-seq (io/file shapes))
                          (filter #(and (.isFile %)
-                                       (.endsWith (.getName %) ".shp"))))
+                                       (or (.endsWith (.getName %) ".shp")
+                                           (.endsWith (.getName %) ".json")))))
         
         lidar-files (->> (file-seq (io/file lidar-directory))
                          (filter #(and (.isFile %)
@@ -217,14 +241,19 @@
                                            (.endsWith (.getName %) ".tiff")))))
 
         lidar-index (lidar/rasters->index lidar-files)
-
+        
         output-location (io/file shapes-out)
 
         get-output-path
         (fn [input-file]
-          (io/file output-location (.replaceAll (.getName input-file)
-                                                "\\.shp$"
-                                                ".geojson")))
+          (let [old-name (.getName input-file)
+                new-name (if (.endsWith old-name ".json")
+                           (.replaceAll old-name "\\.json$" "-lidar.json")
+                           (.replaceAll old-name "\\.shp$" ".json"))
+                
+                ]
+            (io/file output-location new-name))
+          )
         ]
     
     (when (not (.exists output-location))
@@ -241,6 +270,8 @@
             (lidar/add-lidar-to-shapes
              lidar-index
              :buffer-size buffer-size
+             :storey-height storey-height
+             :volume-tiles volume-tiles
              :ground-level-threshold ground-level-threshold)
             (geoio/write-to output-path)))))
   )
@@ -326,13 +357,17 @@
         "overpass"
         (run-with-arguments
          connect-overpass
-         [[nil "--path-subtypes PATH-SUBTYPES" "A table mapping overpass highway to subtype"
-           :missing "A road subtype file is required"
+         [[nil "--overpass-api URL" "The overpass API URL (see https://wiki.openstreetmap.org/wiki/Overpass_API)"]
+          [nil "--resi-subtypes FILE"
+           "A file listing resi subtypes, one per line. Places with no value are resi."
+           :validate [#(.exists (io/as-file %))
+                      "The list of resi subtypes must exist"]]
+          
+          [nil "--path-subtypes FILE" "A table mapping overpass highway to subtype"
            :validate [#(.exists (io/as-file %))
                       "The path subtype file must exist"]]
           
-          [nil "--building-subtypes BUILDING-SUBTYPES" "Building subtypes mapping file"
-           :missing "A building subtypes file is required"
+          [nil "--building-subtypes FILE" "Building subtypes mapping file"
            :validate [#(.exists (io/as-file %))
                       "The building subtypes file must exist"]]]
          
@@ -342,18 +377,35 @@
             ["Required arguments: <area name> <buildings output> <ways output>"])
          args)
 
-        "estimate"
+        "model-demand"
         (run-with-arguments
-         add-estimates
-         [[nil "--path-costs PATH-COSTS-TABLE"]
-          [nil "--demands DEMAND-MODEL"]]
-         #(if (not= 2 (count %))
-            ["Required arguments: <input file> <output file>"]))
+         run-demand-model
+         [[nil "--demand-model FILE"
+           :default []
+           :assoc-fn (fn [m k v] (update m k conj v))
+           :validate [#(.exists (io/as-file %)) "Demand model files must exist"]]
+          [nil "--peak-model M,C"
+           :default [0.0004963 21.84]
+           :parse-fn (fn [i] (map #(Double/parseDouble %) (.split i "")))
+           ]]
+         #(if (= 2 (count %))
+            [(file-exists (first %))
+             (file-not-exists (second %))]
+            ["Required arguments: <input file> <output file>"])
+         args)
         
         "lidar"
         (run-with-arguments
          add-lidar
-         [[nil "--buffer-size BUFFER-SIZE"
+         [[nil "--volume-tiles FILE"
+           :validate [#(.exists (io/as-file %))
+                      "The volume ntiles file must exist"]
+           ]
+          [nil "--storey-height NUMBER"
+           :parse-fn #(Double/parseDouble %)
+           :default 4.1
+           ]
+          [nil "--buffer-size BUFFER-SIZE"
            :parse-fn #(Double/parseDouble %)
            :default 1.5]
           [nil "--ground-level-threshold THRESHOLD"
