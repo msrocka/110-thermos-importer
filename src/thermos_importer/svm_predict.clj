@@ -13,7 +13,7 @@
    (fn [^doubles x ^doubles y]
      (let [dim (count x)
            dist (loop [i 0
-                       t 0]
+                       t (double 0)]
                   (if (< i dim)
                     (recur (inc i)
                            (let [xi (aget x i)
