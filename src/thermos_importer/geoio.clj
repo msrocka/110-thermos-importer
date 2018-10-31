@@ -1,6 +1,7 @@
 (ns thermos-importer.geoio
   (:require [clojure.java.io :as io]
             [clojure.string :as string]
+            [clojure.set :refer [map-invert]]
             [digest]
             [thermos-importer.util :as util])
   (:import [org.locationtech.jts.geom Geometry]
@@ -173,6 +174,25 @@
       :otherwise
       nil)))
 
+(defn clean-string-for-output [s]
+  (.. s
+      (toLowerCase)
+      (replaceAll "^:" "")
+      (replaceAll "[^0-9a-z]+" "_")))
+
+(defn clean-keys-for-output [keys]
+  (map-invert
+   (reduce
+    (fn [out key]
+      (let [k-name (clean-string-for-output (name key))
+            k-full-name (clean-string-for-output (str key))]
+        (assoc out
+               (cond (= key ::geometry) "geometry"
+                     (contains? out k-name) k-full-name
+                     :default k-name)
+               key)))
+    {} keys)))
+
 (defn clean-key-for-output [key]
   (if (= key ::geometry)
     "geometry"
@@ -183,7 +203,9 @@
           (replaceAll "[^0-9a-z]+" "_")))))
 
 (defn infer-fields [srid data]
-  (let [all-keys (set (mapcat keys data))]
+  (let [all-keys (set (mapcat keys data))
+        clean-keys (clean-keys-for-output all-keys)]
+    (println "Outputs keys" clean-keys)
     (into {}
           (for [key all-keys
                 :let [values (->> data
@@ -192,7 +214,7 @@
                       get-value (if (keyword? key) key #(get % key))
                       field-type (infer-field-type srid get-value values)]
                 :when field-type]
-            [(clean-key-for-output key) field-type]))))
+            [(get clean-keys key) field-type]))))
 
 (defn write-to
   ;; ah what if the data has a CRS in it per read-from
