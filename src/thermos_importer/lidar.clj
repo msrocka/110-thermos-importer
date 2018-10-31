@@ -233,7 +233,7 @@
   (let [pos (java.util.Arrays/binarySearch values value)]
     (if (< pos 0)
       ;; - (insertion point + 1)
-      (let [pos (- pos)]
+      (let [pos (- pos)] ;; insertion point + 1
         (cond (>= pos (count tiles))
               (last tiles)
               (= 1 pos)
@@ -247,7 +247,7 @@
                    (* (- til1 til0)
                       (/ (- value val0)
                          (- val1 val0)))))))
-      (tiles pos))))
+      (aget tiles pos))))
 
 
 (defn- derive-3d-fields [feature ^double storey-height volumes tiles]
@@ -263,7 +263,7 @@
         external-surface-area (+ external-wall-area (* 2 footprint))
         total-surface-area (+ wall-area (* 2 footprint))
 
-        number-of-floors (int (/ height storey-height))
+        number-of-floors (int (Math/round (/ height storey-height)))
         total-floor-area (* footprint number-of-floors)
 
         ;; in meteres
