@@ -4,28 +4,38 @@
             [clojure.set :refer [map-invert]]
             [digest]
             [thermos-importer.util :as util])
-  (:import [org.locationtech.jts.geom Geometry]
-           [org.geotools.geojson.feature FeatureJSON]
-           [org.geotools.geojson.geom GeometryJSON]
-           [org.geotools.data FileDataStoreFinder DataUtilities]
-           [org.geotools.data.collection ListFeatureCollection]
-           [org.geotools.feature.simple SimpleFeatureBuilder]
-           [org.geotools.referencing CRS]
-           [org.geotools.data.shapefile ShapefileDataStore]
-           [java.nio.charset StandardCharsets]))
+  (:import  [java.security MessageDigest]
+            [org.locationtech.jts.geom Geometry Coordinate]
+            [org.geotools.geojson.feature FeatureJSON]
+            [org.geotools.geojson.geom GeometryJSON]
+            [org.geotools.data FileDataStoreFinder DataUtilities]
+            [org.geotools.data.collection ListFeatureCollection]
+            [org.geotools.feature.simple SimpleFeatureBuilder]
+            [org.geotools.feature FeatureIterator]
+            [org.opengis.feature Feature Property]
+            [org.geotools.referencing CRS]
+            [org.geotools.data.shapefile ShapefileDataStore]
+            [java.nio.charset StandardCharsets]))
 
 (defn- kebab-case [class-name]
   (.toLowerCase
    (.replaceAll class-name "(.)([A-Z])" "$1-$2")))
 
-(defn geometry-type [geometry]
-  (keyword (kebab-case (.getGeometryType geometry))))
+(defn geometry-type [^Geometry geometry]
+  (let [type (.getGeometryType geometry)]
+    (case type
+      "Polygon" :polygon
+      "MultiPolygon" :multi-polygon
+      "MultiPoint" :multi-point
+      "LineString" :line-string
+      "MultiLineString" :multi-line-string
+      (keyword (kebab-case type)))))
 
 (defn- feature-iterator-seq
   "Make a feature iterator into a lazy sequence.
   Note that if you do not exhaust the sequence the iterator will not be closed.
   This is not intended for use in any other context."
-  [feature-iterator]
+  [^FeatureIterator feature-iterator]
   (lazy-seq
    (if (.hasNext feature-iterator)
      (cons (.next feature-iterator)
@@ -33,28 +43,56 @@
      (do (.close feature-iterator)
          nil))))
 
-(defn- feature-geometry [feature]
-  (let [geometry (.getDefaultGeometry feature)
-        n (.getNumGeometries geometry)]
-    (if (and (= n 1)
-             (#{:multi-point :multi-line-string :multi-polygon}
-              (geometry-type geometry)))
-      (.getGeometryN geometry 0)
-      geometry)))
+(defn- feature-geometry [^Feature feature]
+  (if-let [^Geometry geometry (.getDefaultGeometry feature)]
+    (let [n (.getNumGeometries geometry)]
+      (if (and (= n 1)
+               (#{:multi-point :multi-line-string :multi-polygon}
+                (geometry-type geometry)))
+        (.getGeometryN geometry 0)
+        geometry))
+    (do (println "Feature has missing geometry" feature)
+        (flush)
+        nil)))
 
-(defn- feature-attributes [feature]
+
+(defn- feature-attributes [^Feature feature]
   (into {}
-        (for [p (.getProperties feature)]
+        (for [^Property p (.getProperties feature)]
           [(keyword (.getLocalPart (.getName p)))
            (.getValue p)])))
 
-(defn geometry->id [geometry]
-  (digest/md5 (.toText geometry)))
+;; (let [next-id (atom 0)]
+;;   (defn geometry->id [geometry]
+;;     (str "f" (swap! next-id inc))
+;;     ;; (digest/md5 (.toText geometry))
+;;     ))
 
-(defn- feature->map [feature]
+(let [^MessageDigest md5 (MessageDigest/getInstance "MD5")]
+  (defn geometry->id [^Geometry geometry]
+    (.reset md5)
+    (.update md5 (.getBytes (.getGeometryType geometry)))
+    (doseq [^Coordinate c (.getCoordinates geometry)]
+      (let [x (Double/doubleToLongBits (.-x c))
+            y (Double/doubleToLongBits (.-y c))]
+        (.update md5 (unchecked-byte (bit-and 0xFF x)))
+        (.update md5 (unchecked-byte (bit-and 0xFF (bit-shift-right x 8))))
+        (.update md5 (unchecked-byte (bit-and 0xFF (bit-shift-right x 16))))
+        (.update md5 (unchecked-byte (bit-and 0xFF (bit-shift-right x 24))))
+        (.update md5 (unchecked-byte (bit-and 0xFF y)))
+        (.update md5 (unchecked-byte (bit-and 0xFF (bit-shift-right y 8))))
+        (.update md5 (unchecked-byte (bit-and 0xFF (bit-shift-right y 16))))
+        (.update md5 (unchecked-byte (bit-and 0xFF (bit-shift-right y 24))))
+        )
+      )
+    (.toString (BigInteger. 1 (.digest md5)) 16)
+    ;; (digest/md5 (.toText geometry))
+    ))
+
+(defn- feature->map [^Feature feature]
   (let [geometry (feature-geometry feature)
-        identity (geometry->id geometry)
-        type (geometry-type geometry)
+        identity (when geometry (geometry->id geometry))
+        type (when geometry (geometry-type geometry))
         other-fields (feature-attributes feature)]
     (merge (dissoc other-fields :geometry)
            {::geometry geometry ::type type ::id identity})))
@@ -70,14 +108,16 @@
         crs (-> feature-source .getInfo .getCRS)
         crs-id (CRS/lookupIdentifier crs true)
 
-        features (try
-                   (doall
-                    (for [feature (->> feature-source
-                                       .getFeatures
-                                       .features
-                                       feature-iterator-seq)]
-                      (feature->map feature)))
-                   (finally (.dispose store)))]
+        features (doall
+                  (for [feature (->> feature-source
+                                     .getFeatures
+                                     .features
+                                     feature-iterator-seq)
+                        :when feature
+                        :let [m (feature->map feature)]
+                        :when (::geometry m)]
+                    m))]
+    
     {::features features ::crs crs-id}))
 
 (defn- read-from-geojson [filename]
@@ -92,8 +132,11 @@
         features (doall
                   (for [feature (->> feature-collection
                                      .features
-                                     feature-iterator-seq)]
-                    (feature->map feature)))]
+                                     feature-iterator-seq)
+                        :when feature
+                        :let [m (feature->map feature)]
+                        :when m]
+                    m))]
     {::features features ::crs crs-id}))
 
 (defn read-from
@@ -110,7 +153,9 @@
   (let [store (FileDataStoreFinder/getDataStore (io/as-file filename))]
     (cond
       store
-      (read-from-store store)
+      (try
+        (read-from-store store)
+        (finally (.dispose store)))
 
       (.endsWith (.getName filename) ".json")
       (read-from-geojson filename)
