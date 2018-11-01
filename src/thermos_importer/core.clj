@@ -282,7 +282,10 @@
    & {:keys [chunk-size omit-fields]
       :or {chunk-size nil}}
    ]
-  (let [{ways ::geoio/features ways-crs ::geoio/crs}           (geoio/read-from ways-file)
+  (let [_ (println "Reading ways...")
+        {ways ::geoio/features ways-crs ::geoio/crs}           (geoio/read-from ways-file)
+        _ (println "Reading buildings...")
+        
         {buildings ::geoio/features buildings-crs ::geoio/crs} (geoio/read-from buildings-file)
 
         orig-way-fields (set/difference (set (mapcat keys ways))
@@ -291,17 +294,20 @@
         orig-building-fields (set/difference (set (mapcat keys buildings))
                                              (set omit-fields))
 
-        _ (printf "%d buildings [%s], %d ways [%s]\n"
-                  (count buildings) buildings-crs
-                  (count ways) ways-crs)
+        _ (do (printf "%d buildings [%s], %d ways [%s]\n"
+                   (count buildings) buildings-crs
+                   (count ways) ways-crs)
+              (flush))
         
         ways (spatial/node-paths ways)
 
-        _ (printf "%d noded ways\n" (count ways))
+        _ (do (printf "%d noded ways\n" (count ways))
+              (flush))
 
         [buildings ways] (spatial/add-connections ways-crs buildings ways)
 
-        _ (printf "%d connected ways\n" (count ways))
+        _ (do (printf "%d connected ways\n" (count ways))
+              (flush))
         
         buildings
         (for [b buildings]
@@ -351,97 +357,96 @@
     (format "file %s already exists and is not a directory" file)))
 
 (defn -main [& args]
-  (binding [*out* *err*]
-    (let [[com & args] args]
-      (case com
-        "overpass"
-        (run-with-arguments
-         connect-overpass
-         [[nil "--overpass-api URL" "The overpass API URL (see https://wiki.openstreetmap.org/wiki/Overpass_API)"]
-          [nil "--resi-subtypes FILE"
-           "A file listing resi subtypes, one per line. Places with no value are resi."
-           :validate [#(.exists (io/as-file %))
-                      "The list of resi subtypes must exist"]]
-          
-          [nil "--path-subtypes FILE" "A table mapping overpass highway to subtype"
-           :validate [#(.exists (io/as-file %))
-                      "The path subtype file must exist"]]
-          
-          [nil "--building-subtypes FILE" "Building subtypes mapping file"
-           :validate [#(.exists (io/as-file %))
-                      "The building subtypes file must exist"]]]
-         
-         #(if (= 3 (count %))
-            [(file-not-exists (nth % 1))
-             (file-not-exists (nth % 2))]
-            ["Required arguments: <area name> <buildings output> <ways output>"])
-         args)
+  (let [[com & args] args]
+    (case com
+      "overpass"
+      (run-with-arguments
+       connect-overpass
+       [[nil "--overpass-api URL" "The overpass API URL (see https://wiki.openstreetmap.org/wiki/Overpass_API)"]
+        [nil "--resi-subtypes FILE"
+         "A file listing resi subtypes, one per line. Places with no value are resi."
+         :validate [#(.exists (io/as-file %))
+                    "The list of resi subtypes must exist"]]
+        
+        [nil "--path-subtypes FILE" "A table mapping overpass highway to subtype"
+         :validate [#(.exists (io/as-file %))
+                    "The path subtype file must exist"]]
+        
+        [nil "--building-subtypes FILE" "Building subtypes mapping file"
+         :validate [#(.exists (io/as-file %))
+                    "The building subtypes file must exist"]]]
+       
+       #(if (= 3 (count %))
+          [(file-not-exists (nth % 1))
+           (file-not-exists (nth % 2))]
+          ["Required arguments: <area name> <buildings output> <ways output>"])
+       args)
 
-        "model-demand"
-        (run-with-arguments
-         run-demand-model
-         [[nil "--demand-model FILE"
-           :default []
-           :assoc-fn (fn [m k v] (update m k conj v))
-           :validate [#(.exists (io/as-file %)) "Demand model files must exist"]]
-          [nil "--peak-model M,C"
-           :default [0.0004963 21.84]
-           :parse-fn (fn [i] (map #(Double/parseDouble %) (.split i "")))
-           ]]
-         #(if (= 2 (count %))
-            [(file-exists (first %))
-             (file-not-exists (second %))]
-            ["Required arguments: <input file> <output file>"])
-         args)
-        
-        "lidar"
-        (run-with-arguments
-         add-lidar
-         [[nil "--volume-tiles FILE"
-           :validate [#(.exists (io/as-file %))
-                      "The volume ntiles file must exist"]
+      "model-demand"
+      (run-with-arguments
+       run-demand-model
+       [[nil "--demand-model FILE"
+         :default []
+         :assoc-fn (fn [m k v] (update m k conj v))
+         :validate [#(.exists (io/as-file %)) "Demand model files must exist"]]
+        [nil "--peak-model M,C"
+         :default [0.0004963 21.84]
+         :parse-fn (fn [i] (map #(Double/parseDouble %) (.split i "")))
+         ]]
+       #(if (= 2 (count %))
+          [(file-exists (first %))
+           (file-not-exists (second %))]
+          ["Required arguments: <input file> <output file>"])
+       args)
+      
+      "lidar"
+      (run-with-arguments
+       add-lidar
+       [[nil "--volume-tiles FILE"
+         :validate [#(.exists (io/as-file %))
+                    "The volume ntiles file must exist"]
+         ]
+        [nil "--storey-height NUMBER"
+         :parse-fn #(Double/parseDouble %)
+         :default 4.1
+         ]
+        [nil "--buffer-size BUFFER-SIZE"
+         :parse-fn #(Double/parseDouble %)
+         :default 1.5]
+        [nil "--ground-level-threshold THRESHOLD"
+         :parse-fn #(Double/parseDouble %)
+         :default -5.0
+         ]]
+       
+       #(if (= 3 (count %))
+          [(file-exists (nth % 0))
+           (file-exists (nth % 1))
+           (directory-or-missing (nth % 2))
            ]
-          [nil "--storey-height NUMBER"
-           :parse-fn #(Double/parseDouble %)
-           :default 4.1
-           ]
-          [nil "--buffer-size BUFFER-SIZE"
-           :parse-fn #(Double/parseDouble %)
-           :default 1.5]
-          [nil "--ground-level-threshold THRESHOLD"
-           :parse-fn #(Double/parseDouble %)
-           :default -5.0
-           ]]
-         
-         #(if (= 3 (count %))
-            [(file-exists (nth % 0))
-             (file-exists (nth % 1))
-             (directory-or-missing (nth % 2))
-             ]
-            ["Required arguments: <shapefile|directory in> <lidar directory> <shapefile|directory out>"])
-         args)
+          ["Required arguments: <shapefile|directory in> <lidar directory> <shapefile|directory out>"])
+       args)
 
-        "node"
-        (run-with-arguments
-         just-node
-         [[nil "--omit-field FIELD" "Leave out the given field"
-           :id :omit-fields
-           :assoc-fn
-           (fn [m k v]
-             (update m k conj v))]
-          [nil "--chunk-size CHUNK-SIZE" "Make geojson into chunks of this size"
-           :parse-fn #(Integer/parseInt %)]]
-         #(if (= 4 (count %))
-            [(file-exists (nth % 0))
-             (file-exists (nth % 1))
-             (file-not-exists (nth % 2))
-             (file-not-exists (nth % 3))
-             ]
-            ["Required arguments: <ways input> <buildings input> <ways output> <buildings output>"])
-         args)
-        
-        
-        (do (when com (println "Unknown command" com))
-            (println "Usage: <this command> overpass | lidar | node | estimate"))))))
+      "node"
+      (run-with-arguments
+       just-node
+       [[nil "--omit-field FIELD" "Leave out the given field"
+         :id :omit-fields
+         :assoc-fn
+         (fn [m k v]
+           (update m k conj v))]
+        [nil "--chunk-size CHUNK-SIZE" "Make geojson into chunks of this size"
+         :parse-fn #(Integer/parseInt %)]]
+       #(if (= 4 (count %))
+          [(file-exists (nth % 0))
+           (file-exists (nth % 1))
+           (file-not-exists (nth % 2))
+           (file-not-exists (nth % 3))
+           ]
+          ["Required arguments: <ways input> <buildings input> <ways output> <buildings output>"])
+       args)
+      
+      
+      (do (when com (println "Unknown command" com))
+          (println "Usage: <this command> overpass | lidar | node | estimate")))))
 
 
