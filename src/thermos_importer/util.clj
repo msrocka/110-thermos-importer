@@ -67,3 +67,26 @@
   ([sequence n callback finished-callback]
      (drop-last (lazy-cat (seq-counter sequence n callback) 
                   (lazy-seq (cons (finished-callback) ())))))) 
+
+(defn canonizer []
+  (let [state (atom {:next 0 :mapping {}})]
+    (fn self [v]
+      (cond
+        (nil? v)
+        nil
+        
+        (or (list? v) (vector? v))
+        (map self (seq v))
+
+        :otherwise
+        (get-in (swap! state (fn [{n :next m :mapping :as st}]
+                               (if (contains? m v)
+                                 st
+                                 {:next (inc n)
+                                  :mapping (assoc m v n)})))
+                [:mapping v])))))
+
+(defn replace-ids [m fields f]
+  (reduce
+   (fn [m field] (update m field f))
+   m fields))

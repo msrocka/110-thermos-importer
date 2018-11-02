@@ -11,7 +11,8 @@
             [clojure.pprint :refer [pprint]]
             [clojure.data.csv :as csv]
             [clojure.set :as set]
-            [clojure.data.json :as json]))
+            [clojure.data.json :as json]
+            [thermos-importer.util :as util]))
 
 (defn crs->srid [crs]
   (if (and crs (.startsWith crs "EPSG:"))
@@ -279,7 +280,7 @@
 (defn- just-node
   [ways-file buildings-file
    ways-out buildings-out
-   & {:keys [chunk-size omit-fields]
+   & {:keys [chunk-size omit-fields canonize-ids]
       :or {chunk-size nil}}
    ]
   (let [_ (println "Reading ways...")
@@ -308,6 +309,13 @@
 
         _ (do (printf "%d connected ways\n" (count ways))
               (flush))
+
+        idmap (util/canonizer)
+
+        buildings (if canonize-ids
+                    (for [b buildings]
+                      (util/replace-ids b [::geoio/id ::spatial/connects-to-node] idmap))
+                    buildings)
         
         buildings
         (for [b buildings]
@@ -319,7 +327,12 @@
           (merge (select-keys w orig-way-fields)
                  {:length (::spatial/length w)
                   :start-id (::geoio/id (::spatial/start-node w))
-                  :end-id (::geoio/id (::spatial/end-node w))}))
+                  :end-id   (::geoio/id (::spatial/end-node w))}))
+
+        ways (if canonize-ids
+               (for [w ways]
+                 (util/replace-ids w [::geoio/id :start-id :end-id] idmap))
+               ways)
         ]
     (geoio/write-to {::geoio/features ways ::geoio/crs ways-crs} ways-out
                     :chunk-size chunk-size)
@@ -434,6 +447,7 @@
          :assoc-fn
          (fn [m k v]
            (update m k conj v))]
+        [nil "--canonize-ids" "Convert IDs to integers"]
         [nil "--chunk-size CHUNK-SIZE" "Make geojson into chunks of this size"
          :parse-fn #(Integer/parseInt %)]]
        #(if (= 4 (count %))
