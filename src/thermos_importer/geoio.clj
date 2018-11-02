@@ -2,9 +2,9 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as string]
             [clojure.set :refer [map-invert]]
-            [digest]
             [thermos-importer.util :as util])
   (:import  [java.security MessageDigest]
+            [java.util Base64 Base64$Encoder]
             [org.locationtech.jts.geom Geometry Coordinate]
             [org.geotools.geojson.feature FeatureJSON]
             [org.geotools.geojson.geom GeometryJSON]
@@ -16,6 +16,26 @@
             [org.geotools.referencing CRS]
             [org.geotools.data.shapefile ShapefileDataStore]
             [java.nio.charset StandardCharsets]))
+
+
+(defn update-features [m tag f & args]
+  (update m ::features
+          #(let [start (System/currentTimeMillis)
+                 total (count %)]
+             (util/seq-counter
+              (for [feature %] (apply f feature args))
+              (int (/ total 20))
+              (fn [n]
+                (let [now (System/currentTimeMillis)
+                      delta (- now start)]
+                  (when (> delta 5000)
+                    (printf "\r%s [%s%%, %.1fm]"
+                            tag
+                            (int (/ (* 100 n) total))
+                            (float (/ (* (- total n)
+                                         (/ delta n))
+                                      60000)))
+                    (flush))))))))
 
 (defn- kebab-case [class-name]
   (.toLowerCase
@@ -55,7 +75,6 @@
         (flush)
         nil)))
 
-
 (defn- feature-attributes [^Feature feature]
   (into {}
         (for [^Property p (.getProperties feature)]
@@ -68,7 +87,9 @@
 ;;     ;; (digest/md5 (.toText geometry))
 ;;     ))
 
-(let [^MessageDigest md5 (MessageDigest/getInstance "MD5")]
+(let [^MessageDigest md5 (MessageDigest/getInstance "MD5")
+      ^Base64$Encoder base64 (.withoutPadding (Base64/getEncoder))
+      ]
   (defn geometry->id [^Geometry geometry]
     (.reset md5)
     (.update md5 (.getBytes (.getGeometryType geometry)))
@@ -82,12 +103,12 @@
         (.update md5 (unchecked-byte (bit-and 0xFF y)))
         (.update md5 (unchecked-byte (bit-and 0xFF (bit-shift-right y 8))))
         (.update md5 (unchecked-byte (bit-and 0xFF (bit-shift-right y 16))))
-        (.update md5 (unchecked-byte (bit-and 0xFF (bit-shift-right y 24))))
-        )
-      )
-    (.toString (BigInteger. 1 (.digest md5)) 16)
-    ;; (digest/md5 (.toText geometry))
-    ))
+        (.update md5 (unchecked-byte (bit-and 0xFF (bit-shift-right y 24))))))
+    ;; Throw away some bytes. This should give us 16 * 6 bits = 96
+    ;; collision probability for 60 million objects of around
+    ;; 2e-14 which is probably good enough.
+    (.substring (.encodeToString base64 (.digest md5)) 0 16)))
+
 
 (defn- feature->map [^Feature feature]
   (let [geometry (feature-geometry feature)
@@ -317,23 +338,3 @@
       (write-chunk filename data)
       )
     ))
-
-(defn update-features [m tag f & args]
-  (update m ::features
-          #(let [start (System/currentTimeMillis)
-                 total (count %)]
-             (util/seq-counter
-              (for [feature %] (apply f feature args))
-              (int (/ total 20))
-              (fn [n]
-                (let [now (System/currentTimeMillis)
-                      delta (- now start)]
-                  (when (> delta 5000)
-                    (printf "\r%s [%s%%, %.1fm]"
-                            tag
-                            (int (/ (* 100 n) total))
-                            (float (/ (* (- total n)
-                                         (/ delta n))
-                                      60000)))
-                    (flush))))))))
-
