@@ -2,38 +2,45 @@
   (:refer-clojure :exclude [cond])
   (:require [thermos-importer.geoio :as geoio]
             [better-cond.core :refer [cond]])
-  (:import [com.github.davidmoten.rtree RTree]
-           [com.github.davidmoten.rtree.geometry Geometries]
+  (:import [com.github.davidmoten.rtree RTree Entry]
+           [com.github.davidmoten.rtree.geometry Geometries Rectangle]
 
-           [org.locationtech.jts.geom PrecisionModel GeometryFactory Coordinate]
-           [org.locationtech.jts.operation.distance DistanceOp]
+           [org.locationtech.jts.geom Geometry Envelope PrecisionModel GeometryFactory Coordinate]
+           [org.locationtech.jts.operation.distance DistanceOp GeometryLocation]
            [org.locationtech.jts.noding
-            MCIndexNoder NodedSegmentString IntersectionAdder]
+            SegmentString MCIndexNoder NodedSegmentString IntersectionAdder]
            [org.locationtech.jts.algorithm RobustLineIntersector]
 
            [org.geotools.geometry.jts JTS]
            [org.geotools.referencing CRS]
+           [org.opengis.referencing.operation MathTransform]
+           
            [org.geotools.geometry Envelope2D]
            ))
 
 (def SMALL_DISTANCE 0.1)
 (def NEARNESS 500) ;; metres, since we go into our equal-area projection
 (def NEIGHBOURS 6) ;; number of neighbours to consider
+;;(def coordinates (Class/forName "[Lorg.locationtech.jts.geom.Coordinate;"))
 
-(defn feature->rect [feature]
-  (let [bbox (.getEnvelopeInternal (::geoio/geometry feature))]
+(defn feature->rect ^Rectangle [feature]
+  (let [^Geometry geometry (::geoio/geometry feature)
+        ^Envelope bbox (.getEnvelopeInternal geometry)]
     (Geometries/rectangle
      (.getMinX bbox) (.getMinY bbox)
      (.getMaxX bbox) (.getMaxY bbox))))
 
-(defn index-remove! [index feature]
-  (let [size-before (.size @index)]
-    (swap! index #(.delete % feature (feature->rect feature) true))
-    (when (= size-before (.size @index))
-      (println "Unable to remove feature from index?"))))
+(let [delete
+      (fn [^RTree index feature]
+        (.delete index feature (feature->rect feature) true))]
+  (defn index-remove! [index feature]
+    (swap! index delete feature)))
 
-(defn index-insert! [index feature]
-  (swap! index #(.add % feature (feature->rect feature))))
+(let [insert
+      (fn [^RTree index feature]
+        (.add index feature (feature->rect feature)))]
+  (defn index-insert! [index feature]
+    (swap! index insert feature)))
 
 (defn features->index [features]
   (let [index (atom (.create (RTree/star)))]
@@ -43,26 +50,33 @@
     index))
 
 (defn index->features [index]
-  (map #(.value %) (-> @index .entries .toBlocking .toIterable)))
+  (map (fn [^Entry e] (.value e))
+       (let [^RTree index @index]
+         (-> index .entries .toBlocking .toIterable))))
 
 (defn- feature-neighbours
   "Given an INDEX and a FEATURE, find the values in the index which are
   near to the feature's bounding-box."
   [index feature]
-  (for [entry (-> (.nearest @index (feature->rect feature) (double NEARNESS) (int NEIGHBOURS))
-                  .toBlocking .toIterable)]
-    (.value entry)))
+  
+  (let [^RTree index @index]
+    (for [^Entry entry
+          (-> (.nearest index (feature->rect feature) (double NEARNESS) (int NEIGHBOURS))
+              .toBlocking .toIterable)]
+     (.value entry))))
 
 (defn feature-overlaps
   "Given an INDEX and a FEATURE, find the values in the index whose
   bounding boxes overlap the feature's bounding box"
   [index feature]
-  (let [bbox (feature->rect feature)]
-    (for [entry (-> (.search @index (feature->rect feature))
+  (let [bbox (feature->rect feature)
+        ^RTree index @index]
+    (for [^Entry entry (-> (.search index (feature->rect feature))
                     .toBlocking .toIterable)]
       (.value entry))))
 
-(defn- features-intersect? [{a ::geoio/geometry} {b ::geoio/geometry}]
+(defn- features-intersect? [{^Geometry a ::geoio/geometry}
+                            {^Geometry b ::geoio/geometry}]
   (.intersects a b))
 
 (defn- feature-intersections [index feature]
@@ -74,12 +88,13 @@
   "Create a Lambert Conformal Confic projection centred on the bounding
   box of the given set of features, which should be in a lat-lon
   projection, probably 4326."
+  ^MathTransform
   [input-crs features]
   (let [input-crs (CRS/decode input-crs)
-        bounding-box
-        (reduce (fn [box feat]
+        ^Envelope2D bounding-box
+        (reduce (fn ^Envelope2D [^Envelope2D box feat]
                   (.include box (JTS/getEnvelope2D
-                                 (.getEnvelopeInternal (::geoio/geometry feat))
+                                 (.getEnvelopeInternal ^Geometry (::geoio/geometry feat))
                                  input-crs))
                   box)
                 (Envelope2D.)
@@ -119,10 +134,10 @@
 
 ;; it seems like this does reproject into metres, but it doesn't make
 ;; the connectors look perpendicular?
-(defn reproject [features transform]
+(defn reproject [features ^MathTransform transform]
   (map
    (fn [feature]
-     (let [g (::geoio/geometry feature)
+     (let [^Geometry g (::geoio/geometry feature)
            g2 (JTS/transform g transform)
            id2 (geoio/geometry->id g2)]
        (assoc feature
@@ -158,26 +173,29 @@
                                    (CRS/decode crs true)
                                    true))
         make-node
-        #(let [p (.createPoint factory %)]
-           {::geoio/geometry p
-            ::geoio/id (geoio/geometry->id p)})
+        (fn [^Coordinate n] (let [p (.createPoint factory n)]
+                  {::geoio/geometry p
+                   ::geoio/id (geoio/geometry->id p)}))
 
         make-path
         (fn [meta coords]
-          (let [geom (.createLineString factory
-                                        (into-array Coordinate coords))]
+          (let [^"[Lorg.locationtech.jts.geom.Coordinate;"
+                coords (into-array Coordinate coords)
+                geom (.createLineString factory coords)]
             (assoc meta
                    ::geoio/geometry geom
                    ::geoio/id (geoio/geometry->id geom))))
 
         split-connect-path!
-        (fn [p b & [op]]
-          (let [op (or op (DistanceOp. (::geoio/geometry p)
-                                       (::geoio/geometry b)))
-                [on-p on-b] (.nearestLocations op)
+        (fn [p b & [^DistanceOp op]]
+          (let [^DistanceOp
+                op (or op (DistanceOp. ^Geometry (::geoio/geometry p)
+                                       ^Geometry (::geoio/geometry b)))
+                [^GeometryLocation on-p
+                 ^GeometryLocation on-b] (.nearestLocations op)
                 distance (.distance op)
 
-                path-coordinates (.getCoordinates (::geoio/geometry p))
+                path-coordinates (.getCoordinates ^Geometry (::geoio/geometry p))
                 split-position (.getSegmentIndex on-p)
                 split-point (.getCoordinate on-p)
 
@@ -266,7 +284,7 @@
                                   (DistanceOp. (::geoio/geometry %)
                                                (::geoio/geometry building)))
                                 nearby-paths)
-              [nearest-path op] (first (sort-by #(.distance (second %)) distance-ops))
+              [nearest-path op] (first (sort-by #(.distance ^DistanceOp (second %)) distance-ops))
               ]
 
         nearest-path
@@ -285,7 +303,7 @@
     ;; the right coordinate system
     (let [paths (index->features path-index)
 
-          add-length #(assoc % ::length (.getLength (::geoio/geometry %)))
+          add-length #(assoc % ::length (.getLength ^Geometry (::geoio/geometry %)))
           
           paths (map add-length paths)
           
@@ -294,7 +312,7 @@
                      #(assoc % ::connects-to-node (building-nodes (::geoio/id %)))
                      buildings)
 
-          add-area #(assoc % ::area (.getArea (::geoio/geometry %)))
+          add-area #(assoc % ::area (.getArea ^Geometry (::geoio/geometry %)))
           buildings (map add-area buildings)
 
           ;; finally put it back into our input CRS
@@ -309,7 +327,8 @@
   which it came from, so we can preserve the feature metadata (IDs etc)."
   [feature]
   (NodedSegmentString.
-   (.getCoordinates (::geoio/geometry feature))
+   ^"[Lorg.locationtech.jts.geom.Coordinate;"
+   (.getCoordinates ^Geometry (::geoio/geometry feature))
    feature))
 
 (defn node-paths
@@ -321,10 +340,12 @@
   (let [noder (MCIndexNoder.)
         intersector (IntersectionAdder. (RobustLineIntersector.))
         factory (GeometryFactory.)
-        make-point #(let [p (.createPoint factory %)]
-                      {::geoio/geometry p
-                       ::geoio/id (geoio/geometry->id p)})
-        make-linestring #(.createLineString factory %)
+        make-point (fn [^Coordinate x]
+                     (let [p (.createPoint factory x)]
+                       {::geoio/geometry p
+                        ::geoio/id (geoio/geometry->id p)}))
+        make-linestring (fn [^"[Lorg.locationtech.jts.geom.Coordinate;" coords]
+                          (.createLineString factory coords))
         point-id #(geoio/geometry->id (make-point %))
         ]
 
@@ -337,7 +358,7 @@
         (println "Noding completed" (count paths) "before noding"
                  (count noded-segments) "after noding"
                  )
-        (for [seg noded-segments
+        (for [^SegmentString seg noded-segments
               :let [feature (.getData seg)
                     coords (.getCoordinates seg)
                     new-geom (make-linestring coords)
