@@ -21,14 +21,22 @@
   ;;"http://overpass-api.de/api/interpreter")
 
 (defn query-name [area-name]
-  (format "(area[name=%s];)->.a;
+  (let [area-query (cond
+                     (.startsWith area-name "rel:")
+                     (format "(rel(%s); map_to_area;) -> .a;" (.substring area-name 4))
+                     (.startsWith area-name "way:")
+                     (format "(way(%s); map_to_area;) -> .a;" (.substring area-name 4))
+                     :default
+                     (format "(area[name=%s];)->.a;" (pr-str area-name)))]
+    (format "%s
   (
   way[landuse] (area.a);
   way[highway] (area.a);
   way[building] (area.a);
   rel[building] (area.a);
   );
-  out geom meta;" (pr-str area-name)))
+  out geom meta;" area-query)
+    ))
 
 (def geometry-factory
   (GeometryFactory. (org.locationtech.jts.geom.PrecisionModel.) 4326))
