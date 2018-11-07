@@ -12,7 +12,8 @@
             [clojure.data.csv :as csv]
             [clojure.set :as set]
             [clojure.data.json :as json]
-            [thermos-importer.util :as util]))
+            [thermos-importer.util :as util])
+  (:import [org.locationtech.jts.geom Geometry]))
 
 (defn crs->srid [crs]
   (if (and crs (.startsWith crs "EPSG:"))
@@ -205,14 +206,15 @@
         (geoio/update-features :add-demand-estimate add-demand-estimate)
         (geoio/write-to (io/file output-file)))))
 
-(defn- explode-multipolygons [shapes]
+(defn- explode-multi-geometries [shapes]
   (let [explode-geometry
         (fn [thing]
           (case (::geoio/type thing)
-            :multi-polygon
-            (let [geom (::geoio/geometry thing)]
-              (for [n (range (.getNumGeometries geom))]
-                (assoc thing ::geoio/geometry (.getGeometryN thing n))))
+            (:multi-polygon :multi-line-string :multi-point)
+            (let [geom ^Geometry (::geoio/geometry thing)]
+              (for [n (range (.getNumGeometries geom))
+                    :let [^Geometry sub-geom (.getGeometryN geom n)]]
+                (geoio/update-geometry thing sub-geom)))
             
             [thing]))]
     (update shapes
@@ -267,7 +269,7 @@
         (printf "%s -> %s\n" shape-file output-path)
         (-> shape-file
             (geoio/read-from)
-            (explode-multipolygons)
+            (explode-multi-geometries)
             (lidar/add-lidar-to-shapes
              lidar-index
              :buffer-size buffer-size
@@ -284,10 +286,12 @@
       :or {chunk-size nil}}
    ]
   (let [_ (println "Reading ways...")
-        {ways ::geoio/features ways-crs ::geoio/crs}           (geoio/read-from ways-file)
+        {ways ::geoio/features ways-crs ::geoio/crs}           (explode-multi-geometries
+                                                                (geoio/read-from ways-file))
+
         _ (println "Reading buildings...")
-        
-        {buildings ::geoio/features buildings-crs ::geoio/crs} (geoio/read-from buildings-file)
+        {buildings ::geoio/features buildings-crs ::geoio/crs} (explode-multi-geometries
+                                                                (geoio/read-from buildings-file))
 
         orig-way-fields (set/difference (set (mapcat keys ways))
                                         (set omit-fields))

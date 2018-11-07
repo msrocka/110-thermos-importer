@@ -21,6 +21,7 @@
                             [org.geotools/gt-coverage "20.0"]
                             [org.geotools/gt-geotiff "20.0"]
                             [org.geotools/gt-geojson "20.0"]
+                            [org.geotools/gt-geopkg "20.0"]
                             [org.geotools/gt-referencing "20.0"] ; Coordinate transformations
                             [org.geotools/gt-epsg-hsql "20.0"] ; Coordinate system definitions
                             

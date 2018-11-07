@@ -2,21 +2,25 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as string]
             [clojure.set :refer [map-invert]]
-            [thermos-importer.util :as util])
+            [thermos-importer.util :as util]
+            [thermos-importer.geoio :as geoio])
   (:import  [java.security MessageDigest]
             [java.util Base64 Base64$Encoder]
             [org.locationtech.jts.geom Geometry Coordinate]
+            [org.geotools.geometry.jts Geometries]
             [org.geotools.geojson.feature FeatureJSON]
             [org.geotools.geojson.geom GeometryJSON]
+            [org.geotools.geopkg GeoPackage FeatureEntry]
             [org.geotools.data FileDataStoreFinder DataUtilities]
+            [org.geotools.data.simple SimpleFeatureCollection]
             [org.geotools.data.collection ListFeatureCollection]
             [org.geotools.feature.simple SimpleFeatureBuilder]
             [org.geotools.feature FeatureIterator]
             [org.opengis.feature Feature Property]
+            [org.opengis.feature.simple SimpleFeature]
             [org.geotools.referencing CRS]
             [org.geotools.data.shapefile ShapefileDataStore]
             [java.nio.charset StandardCharsets]))
-
 
 (defn update-features [m tag f & args]
   (update m ::features
@@ -37,7 +41,7 @@
                                       60000)))
                     (flush))))))))
 
-(defn- kebab-case [class-name]
+(defn- kebab-case [^String class-name]
   (.toLowerCase
    (.replaceAll class-name "(.)([A-Z])" "$1-$2")))
 
@@ -63,7 +67,7 @@
      (do (.close feature-iterator)
          nil))))
 
-(defn- feature-geometry [^Feature feature]
+(defn- feature-geometry [^SimpleFeature feature]
   (if-let [^Geometry geometry (.getDefaultGeometry feature)]
     (let [n (.getNumGeometries geometry)]
       (if (and (= n 1)
@@ -76,16 +80,14 @@
         nil)))
 
 (defn- feature-attributes [^Feature feature]
-  (into {}
-        (for [^Property p (.getProperties feature)]
-          [(keyword (.getLocalPart (.getName p)))
-           (.getValue p)])))
-
-;; (let [next-id (atom 0)]
-;;   (defn geometry->id [geometry]
-;;     (str "f" (swap! next-id inc))
-;;     ;; (digest/md5 (.toText geometry))
-;;     ))
+  (let [geometry-property (.getDefaultGeometryProperty feature)]
+    (into {}
+          (for [^Property p (.getProperties feature)
+                :when (not (= (.getName p)
+                              (.getName geometry-property)))]
+            (do
+              [(keyword (.getLocalPart (.getName p)))
+               (.getValue p)])))))
 
 (let [^MessageDigest md5 (MessageDigest/getInstance "MD5")
       ^Base64$Encoder base64 (.withoutPadding (Base64/getEncoder))
@@ -109,19 +111,21 @@
     ;; 2e-14 which is probably good enough.
     (.substring (.encodeToString base64 (.digest md5)) 0 16)))
 
+(defn update-geometry [feature ^Geometry geom]
+  (if geom
+    (assoc feature
+         ::geometry geom
+         ::type (geometry-type geom)
+         ::id (geometry->id geom))
+    (dissoc feature ::geometry ::type ::id)))
 
 (defn- feature->map [^Feature feature]
-  (let [geometry (feature-geometry feature)
-        identity (when geometry (geometry->id geometry))
-        type (when geometry (geometry-type geometry))
-        other-fields (feature-attributes feature)]
-    (merge (dissoc other-fields :geometry)
-           {::geometry geometry ::type type ::id identity})))
+  (update-geometry
+   (feature-attributes feature)
+   (feature-geometry feature)))
 
 (defn geom->map [geom]
-  {::geometry geom
-   ::type (geometry-type geom)
-   ::id (geometry->id geom)})
+  (update-geometry {} geom))
 
 (defn- read-from-store [store]
   (.setCharset store (StandardCharsets/UTF_8))
@@ -129,16 +133,14 @@
         crs (-> feature-source .getInfo .getCRS)
         crs-id (CRS/lookupIdentifier crs true)
 
-        features (doall
-                  (for [feature (->> feature-source
-                                     .getFeatures
-                                     .features
-                                     feature-iterator-seq)
-                        :when feature
-                        :let [m (feature->map feature)]
-                        :when (::geometry m)]
-                    m))]
-    
+        features (for [feature (doall (->> feature-source
+                                           .getFeatures
+                                           .features
+                                           feature-iterator-seq))
+                       :when feature
+                       :let [m (feature->map feature)]
+                       :when (::geometry m)]
+                   m)]
     {::features features ::crs crs-id}))
 
 (defn- read-from-geojson [filename]
@@ -150,14 +152,17 @@
 
         feature-collection (.readFeatureCollection io filename)
 
-        features (doall
-                  (for [feature (->> feature-collection
-                                     .features
-                                     feature-iterator-seq)
-                        :when feature
-                        :let [m (feature->map feature)]
-                        :when m]
-                    m))]
+        features  (doall (->> feature-collection
+                              .features
+                              feature-iterator-seq))
+        
+        features (for [feature features
+                       :when feature
+                       :let [m (feature->map feature)]
+                       :when m]
+                   m)]
+
+    (println filename (count features))
     {::features features ::crs crs-id}))
 
 (defn read-from
@@ -171,7 +176,8 @@
   "
   [filename]
 
-  (let [store (FileDataStoreFinder/getDataStore (io/as-file filename))]
+  (let [filename (io/as-file filename)
+        store (FileDataStoreFinder/getDataStore filename)]
     (cond
       store
       (try
@@ -240,7 +246,7 @@
       :otherwise
       nil)))
 
-(defn clean-string-for-output [s]
+(defn clean-string-for-output [^String s]
   (.. s
       (toLowerCase)
       (replaceAll "^:" "")
@@ -271,7 +277,6 @@
 (defn infer-fields [srid data]
   (let [all-keys (set (mapcat keys data))
         clean-keys (clean-keys-for-output all-keys)]
-    (println "Outputs keys" clean-keys)
     (into {}
           (for [key all-keys
                 :let [values (->> data
@@ -283,7 +288,6 @@
             [(get clean-keys key) field-type]))))
 
 (defn write-to
-  ;; ah what if the data has a CRS in it per read-from
   "Store some geospatial data into a form that we like."
   [data filename & {:keys [fields chunk-size]}]
 
@@ -314,21 +318,43 @@
         feature-builder
         (SimpleFeatureBuilder. type)
 
+        make-feature-collection
+        (fn ^SimpleFeatureCollection [data]
+          (ListFeatureCollection.
+           type
+           (for [datum data]
+             ;; TODO add details to builder here
+             ;; it seems that on buildfeature it resets
+             (do (doseq [[field-name {value-function :value}] fields]
+                   (.add feature-builder (value-function datum)))
+                 (.buildFeature feature-builder
+                                (when-let [id (or (::id datum) (:id datum))]
+                                  (str id)))
+                 ))))
+        
         write-chunk
-        (fn [filename data]
-          (println "writing" filename "...")
-          (with-open [writer (io/writer filename)]
-            (.writeFeatureCollection
-             geo-writer
-             (ListFeatureCollection.
-              type
-              (for [datum data]
-                ;; TODO add details to builder here
-                ;; it seems that on buildfeature it resets
-                (do (doseq [[field-name {value-function :value}] fields]
-                      (.add feature-builder (value-function datum)))
-                    (.buildFeature feature-builder nil))))
-             writer)))
+        (cond
+          (.endsWith filename "gpkg")
+          (fn [filename data]
+            (let [feature-entry (FeatureEntry.)
+                  out (GeoPackage. (io/file filename))]
+              (try
+                (.setTableName feature-entry "features")
+                (.setGeometryColumn feature-entry "geometry")
+                (.setGeometryType feature-entry Geometries/GEOMETRY)
+                (.add out feature-entry (make-feature-collection data))
+                (finally (.close out)))))
+          
+          
+          :default ;; geojson
+          (fn [filename data]
+            (println "writing" filename "...")
+            (with-open [writer (io/writer filename)]
+              (.writeFeatureCollection
+               geo-writer
+               (make-feature-collection data)
+               writer))))
+        
         ]
     
     (if chunk-size
@@ -338,3 +364,5 @@
       (write-chunk filename data)
       )
     ))
+
+

@@ -8,7 +8,8 @@
            [org.locationtech.jts.geom Geometry Envelope PrecisionModel GeometryFactory Coordinate]
            [org.locationtech.jts.operation.distance DistanceOp GeometryLocation]
            [org.locationtech.jts.noding
-            SegmentString MCIndexNoder NodedSegmentString IntersectionAdder]
+            SegmentString MCIndexNoder NodedSegmentString IntersectionAdder
+            SegmentStringDissolver]
            [org.locationtech.jts.algorithm RobustLineIntersector]
 
            [org.geotools.geometry.jts JTS]
@@ -173,18 +174,16 @@
                                    (CRS/decode crs true)
                                    true))
         make-node
-        (fn [^Coordinate n] (let [p (.createPoint factory n)]
-                  {::geoio/geometry p
-                   ::geoio/id (geoio/geometry->id p)}))
+        (fn [^Coordinate n]
+          (let [p (.createPoint factory n)]
+            (geoio/update-geometry {} p)))
 
         make-path
         (fn [meta coords]
           (let [^"[Lorg.locationtech.jts.geom.Coordinate;"
                 coords (into-array Coordinate coords)
                 geom (.createLineString factory coords)]
-            (assoc meta
-                   ::geoio/geometry geom
-                   ::geoio/id (geoio/geometry->id geom))))
+            (geoio/update-geometry meta geom)))
 
         split-connect-path!
         (fn [p b & [^DistanceOp op]]
@@ -239,7 +238,8 @@
             (if (> distance SMALL_DISTANCE)
               ;; we need a connecting line!
               (let [new-end-node (make-node (.getCoordinate on-b))
-                    connector (make-path {::start-node connect-to-node ::end-node new-end-node
+                    connector (make-path {::start-node connect-to-node
+                                          ::end-node new-end-node
                                           :subtype "Connector"}
                                          [split-point (.getCoordinate on-b)])]
                 ;; we need to add the connector to the path index
@@ -257,8 +257,8 @@
         (count buildings)
 
         buildings-done
-        (atom 0)
-        ]
+        (atom 0)]
+    
     (println "Processing buildings")
     (doseq [building buildings]
       (cond
@@ -331,6 +331,135 @@
    (.getCoordinates ^Geometry (::geoio/geometry feature))
    feature))
 
+(let [factory (GeometryFactory.)]
+  (defn- make-point [^Coordinate x]
+    (let [p (.createPoint factory x)]
+      (geoio/update-geometry {} p)))
+  
+  (defn- make-linestring ^Geometry [^"[Lorg.locationtech.jts.geom.Coordinate;" coords]
+    (.createLineString factory coords)))
+
+(defn- concat-linestrings [^Geometry a ^Geometry b]
+  (let [coords-a (.getCoordinates a)
+        coords-b (.getCoordinates b)
+        a0 (first coords-a) an (last coords-a)
+        b0 (first coords-b) bn (last coords-b)
+        ]
+    (cond
+      (= a0 b0)
+      (make-linestring (into-array Coordinate (concat (reverse coords-b) coords-a)))
+      
+      (= a0 bn)
+      (make-linestring (into-array Coordinate (concat coords-b coords-a)))
+      
+      (= an bn)
+      (make-linestring (into-array Coordinate (concat coords-a (reverse coords-b))))
+
+      (= an b0)
+      (make-linestring (into-array Coordinate (concat coords-a coords-b)))
+
+      :otherwise (throw (IllegalArgumentException. (format "No touching endpoints: %s %s %s %s"
+                                                           a0 an b0 bn))))))
+
+
+(defn- add-endpoints [feature]
+  (let [coords (.getCoordinates ^Geometry (::geoio/geometry feature))]
+    (assoc feature
+           ::start-node (make-point (first coords))
+           ::end-node (make-point (last coords)))))
+
+(defn- assoc-by [f s]
+  (reduce #(assoc %1 (f %2) %2)  {} s))
+
+(defn- collapse-paths
+  "Takes paths which have been noded and so contain start and end IDs,
+  and collapses them together at junctions of degree 2 where this will
+  not affect the properties of the resulting paths."
+  [paths]
+  (println "Remove redundant vertices from" (count paths) "paths")
+  (let [safe-inc #(inc (or % 0))
+
+        paths-by-id (assoc-by ::geoio/id paths)
+        
+        paths-by-vertex
+        (reduce (fn [a p]
+                  (-> a
+                      (update (::geoio/id (::start-node p))
+                              conj p)
+                      (update (::geoio/id (::end-node p))
+                              conj p)))
+                {} paths)
+
+        collapsible-vertices
+        (->> paths-by-vertex
+             (filter 
+              (fn [[v p]]
+                (and (= 2 (count p))
+                     (= (dissoc (first p)
+                                ::geoio/id ::geoio/geometry ::start-node ::end-node)
+                        (dissoc (second p)
+                                ::geoio/id ::geoio/geometry ::start-node ::end-node)))))
+             (into {}))
+
+        _ (println (count collapsible-vertices) "redundant vertices to remove")
+        
+        find-new-name
+        #(loop [new-names %1 id %2]
+           (if (contains? new-names id)
+             (recur new-names (get new-names id))
+             id))
+
+        paths-by-id
+        (loop [paths-by-id paths-by-id
+               new-names {}
+               collapsible-vertices (vals collapsible-vertices)]
+          (if (seq collapsible-vertices)
+            (let [[a b] (first collapsible-vertices)
+                  ;; we might have collapsed the input paths other ends
+                  ;; already so we need to look them up in the new-names
+                  ;; map
+                  
+                  a (paths-by-id (find-new-name new-names (::geoio/id a)))
+                  b (paths-by-id (find-new-name new-names (::geoio/id b)))
+
+                  new-path (-> a
+                               (geoio/update-geometry
+                                (concat-linestrings
+                                 (::geoio/geometry a)
+                                 (::geoio/geometry b)))
+                               (add-endpoints))
+
+                  _ (when (= (::geoio/id (::start-node new-path))
+                           (::geoio/id (::end-node new-path))
+                           )
+                      (println "Endpoints of new path collide")
+                      (println a)
+                      (println b)
+                      (println new-path)
+                      (System/exit 1)
+                      )
+                  
+                  new-id (::geoio/id new-path)
+
+                  ;; record this renaming
+                  new-names (assoc new-names
+                                   (::geoio/id a) new-id
+                                   (::geoio/id b) new-id)
+
+                  ;; add new path and delete old ones
+                  paths-by-id (-> paths-by-id
+                                  (assoc new-id new-path)
+                                  (dissoc (::geoio/id a)
+                                          (::geoio/id b)))
+                  ]
+              (recur paths-by-id new-names (rest collapsible-vertices)))
+            paths-by-id))
+        
+        paths (vals paths-by-id)
+        ]
+    paths
+    ))
+
 (defn node-paths
   "Takes paths, nodes it, and returns the noded paths. Original metadata
   are transferred onto the new paths.
@@ -339,14 +468,6 @@
   [paths]
   (let [noder (MCIndexNoder.)
         intersector (IntersectionAdder. (RobustLineIntersector.))
-        factory (GeometryFactory.)
-        make-point (fn [^Coordinate x]
-                     (let [p (.createPoint factory x)]
-                       {::geoio/geometry p
-                        ::geoio/id (geoio/geometry->id p)}))
-        make-linestring (fn [^"[Lorg.locationtech.jts.geom.Coordinate;" coords]
-                          (.createLineString factory coords))
-        point-id #(geoio/geometry->id (make-point %))
         ]
 
     (.setSegmentIntersector noder intersector)
@@ -354,21 +475,21 @@
       (println "Computing nodes...")
       (.computeNodes noder segments)
 
-      (let [noded-segments (.getNodedSubstrings noder)]
+      (let [noded-segments (.getNodedSubstrings noder)
+            dissolver (SegmentStringDissolver.)
+            _ (.dissolve dissolver noded-segments)
+            noded-segments (.getDissolved dissolver)
+            ]
         (println "Noding completed" (count paths) "before noding"
-                 (count noded-segments) "after noding"
-                 )
-        (for [^SegmentString seg noded-segments
-              :let [feature (.getData seg)
-                    coords (.getCoordinates seg)
-                    new-geom (make-linestring coords)
-                    ]]
-          (assoc feature
-                 ::geoio/geometry new-geom
-                 ::geoio/id (geoio/geometry->id new-geom)
-                 ;; this topology construction depends entirely on the
-                 ;; noder producing identical points at the touching
-                 ;; parts of segments
-                 ::start-node (make-point (first coords))
-                 ::end-node (make-point (last coords))
-                 ))))))
+                 (count noded-segments) "after noding")
+
+        (collapse-paths
+         (for [^SegmentString seg noded-segments
+               :let [feature (.getData seg)
+                     coords (.getCoordinates seg)
+                     new-geom (make-linestring coords)
+                     new-id (geoio/geometry->id new-geom)]]
+           (-> feature
+               (geoio/update-geometry new-geom)
+               (add-endpoints))))))))
+
