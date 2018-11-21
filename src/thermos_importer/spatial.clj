@@ -85,7 +85,7 @@
        (feature-overlaps index) ;; find things which could intersect
        (filter (partial features-intersect? feature)))) ;; restrict to things which do
 
-(defn- create-lcc
+(defn create-lcc
   "Create a Lambert Conformal Confic projection centred on the bounding
   box of the given set of features, which should be in a lat-lon
   projection, probably 4326."

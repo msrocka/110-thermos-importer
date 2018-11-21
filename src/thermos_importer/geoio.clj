@@ -161,8 +161,6 @@
                        :let [m (feature->map feature)]
                        :when m]
                    m)]
-
-    (println filename (count features))
     {::features features ::crs crs-id}))
 
 (defn read-from
@@ -291,7 +289,9 @@
   "Store some geospatial data into a form that we like."
   [data filename & {:keys [fields chunk-size]}]
 
-  (let [crs (::crs data)
+  (let [filename (.getPath (io/file filename))
+
+        crs (::crs data)
         epsg (CRS/lookupEpsgCode (CRS/decode crs true) true)
         
         data (::features data)

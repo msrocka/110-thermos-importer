@@ -264,8 +264,7 @@
       (printf "creating output directory %s\n" output-location))
     
     (doseq [shape-file shape-files]
-      (let [output-path (get-output-path shape-file)
-            ]
+      (let [output-path (.getPath (get-output-path shape-file))]
         (printf "%s -> %s\n" shape-file output-path)
         (-> shape-file
             (geoio/read-from)

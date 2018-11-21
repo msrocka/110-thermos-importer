@@ -1,5 +1,6 @@
 (ns thermos-importer.lidar
   (:require [thermos-importer.geoio :as geoio]
+            [thermos-importer.spatial :as spatial]
             [thermos-importer.util :as util]
             [thermos-importer.lidar :as lidar])
   (:import com.github.davidmoten.rtree.geometry.Geometries
@@ -46,12 +47,12 @@
   
   (let [properties                      ; first lookup the properties for each raster
         (for [raster rasters]
-          (do
-            (printf "-> %s\r" (.getName raster))
+          (let [crs (get-raster-crs raster)]
+            (printf "-> %s [%s]\r" (.getName raster) crs)
             (flush)
             {:raster raster
              :bounds (get-raster-bounds raster)
-             :crs (get-raster-crs raster)}))
+             :crs crs}))
 
         by-crs                          ; bin them by CRS
         (group-by :crs properties)
@@ -64,6 +65,7 @@
               (.add index raster bounds))
             (RTree/create) rasters)])
         ]
+    (println)
     (into {} indices)))
 
 (defn- find-rasters
@@ -323,46 +325,45 @@
         tile-tiles  (double-array (map second volume-tiles))
 
         shapes-crs (::geoio/crs shapes)
-        ;; empty-fields {::perimeter nil
-        ;;               ::footprint nil
-        ;;               ::ground-height nil
-        ;;               ::height nil
-        ;;               ::num-samples nil
-        ;;               ::shared-perimeter 0
-        ;;               }
-        ;; shapes (update shapes ::geoio/features (partial into [] (map #(merge % empty-fields))))
         feature-index (util/index-features (::geoio/features shapes))
-        shapes (geoio/update-features shapes :estimate-party-walls
-                                      estimate-party-walls feature-index)
+        lcc-transform (spatial/create-lcc shapes-crs (::geoio/geatures shapes))
+
+        add-footprint-and-perimeter (fn [feature]
+                                      (let [shape (::geoio/geometry feature)
+                                            shape (JTS/transform shape lcc-transform)]
+                                        (merge feature
+                                               {::num-samples 0
+                                                ::footprint (.getArea shape)
+                                                ::perimeter (.getLength shape)})))
         ]
-    (reduce
-     (fn [shapes [raster-crs raster-tree]]
-       (let [transform (CRS/findMathTransform
-                        (CRS/decode shapes-crs true)
-                        (CRS/decode raster-crs))
-             total (count (::geoio/features shapes))
-             start (atom (System/currentTimeMillis))
-             ]
-         (geoio/update-features shapes :intersect-with-lidar
-                                (fn [feature]
-                                  (derive-more-fields
-                                   (merge feature
-                                          (try
-                                            (shape->dimensions
-                                             raster-tree
-                                             (JTS/transform
-                                              (::geoio/geometry feature)
-                                              transform)
-                                             
-                                             buffer-size
-                                             ground-level-threshold)
-                                            (catch Exception e
-                                              (printf
-                                               "Error adding lidar data to %s: %s\n"
-                                               (dissoc feature ::geoio/geometry)
-                                               (.getMessage e))
-                                              {})))
-                                   storey-height
-                                   tile-values tile-tiles
-                                   )))))
-     shapes index)))
+
+    (as-> shapes shapes
+      (geoio/update-features shapes :estimate-party-walls estimate-party-walls feature-index)
+      (geoio/update-features shapes :footprint-and-perimeter add-footprint-and-perimeter)
+
+      (reduce
+       (fn [shapes [raster-crs raster-tree]]
+         (let [transform (CRS/findMathTransform
+                          (CRS/decode shapes-crs true)
+                          (CRS/decode raster-crs))]
+           (geoio/update-features shapes :intersect-with-lidar
+                                  (fn [feature]
+                                    (merge feature
+                                            (try
+                                              (shape->dimensions
+                                               raster-tree
+                                               (JTS/transform
+                                                (::geoio/geometry feature)
+                                                transform)
+                                               
+                                               buffer-size
+                                               ground-level-threshold)
+                                              (catch Exception e
+                                                (printf
+                                                 "Error adding lidar data to %s: %s\n"
+                                                 (dissoc feature ::geoio/geometry)
+                                                 (.getMessage e))
+                                                {})))))))
+       shapes index)
+      (geoio/update-features shapes :derive-fields derive-more-fields storey-height tile-values tile-tiles))))
+
