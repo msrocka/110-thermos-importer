@@ -3,6 +3,7 @@
             [clojure.string :as string]
             [clojure.set :refer [map-invert]]
             [thermos-importer.util :as util]
+            [thermos-importer.util :refer [has-extension]]
             [thermos-importer.geoio :as geoio])
   (:import  [java.security MessageDigest]
             [java.util Base64 Base64$Encoder]
@@ -182,7 +183,7 @@
         (read-from-store store)
         (finally (.dispose store)))
 
-      (.endsWith (.getName filename) ".json")
+      (has-extension filename "json")
       (read-from-geojson filename)
 
       :otherwise
@@ -334,7 +335,7 @@
         
         write-chunk
         (cond
-          (.endsWith filename "gpkg")
+          (has-extension filename "gpkg")
           (fn [filename data]
             (let [feature-entry (FeatureEntry.)
                   out (GeoPackage. (io/file filename))]

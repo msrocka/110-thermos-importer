@@ -12,7 +12,8 @@
             [clojure.data.csv :as csv]
             [clojure.set :as set]
             [clojure.data.json :as json]
-            [thermos-importer.util :as util])
+            [thermos-importer.util :as util]
+            [thermos-importer.util :refer [has-extension]])
   (:import [org.locationtech.jts.geom Geometry]))
 
 (defn crs->srid [crs]
@@ -228,13 +229,14 @@
 
   (let [shape-files (->> (file-seq (io/file shapes))
                          (filter #(and (.isFile %)
-                                       (or (.endsWith (.getName %) ".shp")
-                                           (.endsWith (.getName %) ".json")))))
+                                       (or (has-extension % "shp")
+                                           (has-extension % "json")
+                                           ))))
         
         lidar-files (->> (file-seq (io/file lidar-directory))
                          (filter #(and (.isFile %)
-                                       (or (.endsWith (.getName %) ".tif")
-                                           (.endsWith (.getName %) ".tiff")))))
+                                       (or (has-extension % "tif")
+                                           (has-extension % "tiff")))))
 
         lidar-index (lidar/rasters->index lidar-files)
         
@@ -266,7 +268,6 @@
              lidar-index
              :buffer-size buffer-size
              :storey-height storey-height
-             :volume-tiles volume-tiles
              :ground-level-threshold ground-level-threshold)
             (geoio/write-to output-path)))))
   )

@@ -91,3 +91,21 @@
   (reduce
    (fn [m field] (update m field f))
    m fields))
+
+(defprotocol HasExtension
+  (has-extension [s x]))
+
+(extend-type String
+  HasExtension
+  (has-extension [s x]
+    (and s (.endsWith s (str "." x)))))
+
+(extend-type java.io.File
+  HasExtension
+  (has-extension [f x]
+    (and f (has-extension (.getName f) x))))
+
+(extend-type java.nio.file.Path
+  HasExtension
+  (has-extension [p x]
+    (and p (has-extension (.toString (.getFileName p)) x))))
