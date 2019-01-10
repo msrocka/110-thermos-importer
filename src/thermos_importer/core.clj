@@ -223,17 +223,10 @@
 
 (defn- add-lidar
   [shapes lidar-directory shapes-out &
-   {:keys [buffer-size ground-level-threshold storey-height volume-tiles]
+   {:keys [buffer-size ground-level-threshold storey-height]
     :or {buffer-size 1.5 ground-level-threshold -5}}]
 
-  (let [volume-tiles
-        (sort
-         (when volume-tiles
-           (for [{volume :volume percentile :percentile}
-                 (csv-file->map volume-tiles)]
-             [(Double/parseDouble volume) (Double/parseDouble percentile)])))
-
-        shape-files (->> (file-seq (io/file shapes))
+  (let [shape-files (->> (file-seq (io/file shapes))
                          (filter #(and (.isFile %)
                                        (or (.endsWith (.getName %) ".shp")
                                            (.endsWith (.getName %) ".json")))))
@@ -418,11 +411,7 @@
       "lidar"
       (run-with-arguments
        add-lidar
-       [[nil "--volume-tiles FILE"
-         :validate [#(.exists (io/as-file %))
-                    "The volume ntiles file must exist"]
-         ]
-        [nil "--storey-height NUMBER"
+       [[nil "--storey-height NUMBER"
          :parse-fn #(Double/parseDouble %)
          :default 4.1
          ]

@@ -222,37 +222,8 @@
            ::shared-perimeter-m shared-perimeter-m
            ::perimeter-per-footprint perimeter-per-footprint)))
 
-(defn- get-ntile
-  "This is just yet another interpolating function.
-  VALUES is the x-axis and TILES is the y-axis.
-  Given a VALUE, it will find the x-axis values either side and
-  use them to interpolate into the tiles.
 
-  Inputs below the bottom or above the top of VALUES are clamped
-  into the range.
-  "
-  [^double value ^doubles values ^doubles tiles]
-  (let [pos (java.util.Arrays/binarySearch values value)]
-    (if (< pos 0)
-      ;; - (insertion point + 1)
-      (let [pos (- pos)] ;; insertion point + 1
-        (cond (>= pos (count tiles))
-              (last tiles)
-              (= 1 pos)
-              (first tiles)
-              :otherwise
-              (let [val0 (aget values (dec pos))
-                    val1 (aget values pos)
-                    til0 (aget tiles (dec pos))
-                    til1 (aget tiles pos)]
-                (+ til0
-                   (* (- til1 til0)
-                      (/ (- value val0)
-                         (- val1 val0)))))))
-      (aget tiles pos))))
-
-
-(defn- derive-3d-fields [feature ^double storey-height volumes tiles]
+(defn- derive-3d-fields [feature ^double storey-height]
   (let [{shared-perimeter ::shared-perimeter
          perimeter ::perimeter
          height ::height
@@ -276,10 +247,7 @@
         ext-surface-per-floor-area (if (> total-floor-area 0)
                                      (/ external-surface-area total-floor-area)
                                      0)
-        tot-surface-per-volume (/ total-surface-area volume)
-
-        volume-ntile (get-ntile volume volumes tiles)
-        ]
+        tot-surface-per-volume (/ total-surface-area volume)]
     (assoc feature
            ::wall-area wall-area
            ::party-wall-area party-wall-area
@@ -292,17 +260,16 @@
            ::ext-surface-proportion ext-surface-proportion
            ::ext-surface-per-volume ext-surface-per-volume
            ::ext-surface-per-floor-area ext-surface-per-floor-area
-           ::tot-surface-per-volume tot-surface-per-volume
-           ::volume-ntile volume-ntile)))
+           ::tot-surface-per-volume tot-surface-per-volume)))
 
-(defn- derive-more-fields [feature ^double storey-height volumes tiles]
+(defn- derive-more-fields [feature ^double storey-height]
   (cond-> feature
     (::shared-perimeter feature)
     (derive-2d-fields)
 
     (and (::shared-perimeter feature)
          (pos? (::num-samples feature)))
-    (derive-3d-fields storey-height volumes tiles)))
+    (derive-3d-fields storey-height)))
 
 (defn add-lidar-to-shapes
   "Given a raster index from `rasters->index` and a `shapes`, which is a
@@ -313,18 +280,14 @@
   got ::lidar/surface-area etc. from shape->dimensions."
   [shapes index & {:keys [buffer-size ground-level-threshold
                           storey-height
-                          volume-tiles
                           ]
                    :or {buffer-size 1.5 ground-level-threshold -5
-                        storey-height 4.1 volume-tiles [[0 0]]}
+                        storey-height 4.1}
                    }]
 
   (println (count (::geoio/features shapes)) "shapes to lidarize")
   
-  (let [tile-values (double-array (map first volume-tiles))
-        tile-tiles  (double-array (map second volume-tiles))
-
-        shapes-crs (::geoio/crs shapes)
+  (let [shapes-crs (::geoio/crs shapes)
         feature-index (util/index-features (::geoio/features shapes))
         lcc-transform (spatial/create-lcc shapes-crs (::geoio/geatures shapes))
 
@@ -365,5 +328,5 @@
                                                  (.getMessage e))
                                                 {})))))))
        shapes index)
-      (geoio/update-features shapes :derive-fields derive-more-fields storey-height tile-values tile-tiles))))
+      (geoio/update-features shapes :derive-fields derive-more-fields storey-height))))
 
