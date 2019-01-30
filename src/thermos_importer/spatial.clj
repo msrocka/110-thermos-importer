@@ -436,7 +436,6 @@
                       (println a)
                       (println b)
                       (println new-path)
-                      (System/exit 1)
                       )
                   
                   new-id (::geoio/id new-path)
