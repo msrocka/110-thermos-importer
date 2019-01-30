@@ -7,7 +7,7 @@
   (:import  [java.security MessageDigest]
             [java.util Base64 Base64$Encoder]
             [org.locationtech.jts.geom Geometry Coordinate]
-            [org.geotools.geometry.jts Geometries]
+            [org.geotools.geometry.jts Geometries JTS]
             [org.geotools.geojson.feature FeatureJSON]
             [org.geotools.geojson.geom GeometryJSON]
             [org.geotools.geopkg GeoPackage FeatureEntry]
@@ -189,6 +189,12 @@
       (throw (Exception. (str "Unable to read features from " filename)))
       )))
 
+(defn read-from-multiple [filenames]
+  (let [data (map read-from filenames)
+        crss (map ::crs data)]
+    ;; TODO assuming they have a compatible CRS is a bad plan
+    {::crs (first (filter identity crss))
+     ::features (mapcat ::features data)}))
 
 (defn geometry-field-type [srid values]
   (let [srid (or srid (.getSRID (first values)))
@@ -366,3 +372,14 @@
     ))
 
 
+(defn reproject [features to-crs]
+  (let [input-crs (CRS/decode (::crs features))
+        output-crs (CRS/decode to-crs)]
+    (if (= input-crs output-crs)
+      features
+      (let [transform (CRS/findMathTransform input-crs output-crs true)]
+        {::features
+         (for [f features]
+           (update-geometry f (JTS/transform (::geometry f) transform)))
+         ::crs to-crs
+         }))))
