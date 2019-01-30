@@ -3,8 +3,7 @@
             [clojure.string :as string]
             [clojure.set :refer [map-invert]]
             [thermos-importer.util :as util]
-            [thermos-importer.util :refer [has-extension]]
-            [thermos-importer.geoio :as geoio])
+            [thermos-importer.util :refer [has-extension]])
   (:import  [java.security MessageDigest]
             [java.util Base64 Base64$Encoder]
             [org.locationtech.jts.geom Geometry Coordinate]
