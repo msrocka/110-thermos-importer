@@ -1,0 +1,26 @@
+{:paths ["src" "resources"]
+ :mvn/repos
+ {"boundless" {:url "http://repo.boundlessgeo.com/main"}}
+ :deps
+ {org.clojure/clojure {:mvn/version"1.9.0"}
+  org.clojure/tools.cli {:mvn/version"0.3.5"}
+
+  digest {:mvn/version"1.4.6"}
+  
+  org.geotools/gt-data {:mvn/version"20.0"}
+  org.geotools/gt-shapefile {:mvn/version"20.0"}
+  org.geotools/gt-coverage {:mvn/version"20.0"}
+  org.geotools/gt-geotiff {:mvn/version"20.0"}
+  org.geotools/gt-geojson {:mvn/version"20.0"}
+  org.geotools/gt-geopkg {:mvn/version"20.0"}
+  org.geotools/gt-referencing {:mvn/version"20.0"} ; Coordinate transformations
+  org.geotools/gt-epsg-hsql {:mvn/version"20.0"} ; Coordinate system definitions
+  
+  com.github.davidmoten/rtree {:mvn/version"0.8.0.4"}
+  org.clojure/data.csv {:mvn/version"0.1.4"}
+  org.clojure/data.json {:mvn/version"0.2.6"}
+  clj-http {:mvn/version"3.9.0"}
+  
+  better-cond {:mvn/version"1.0.1"}
+  }}
+
