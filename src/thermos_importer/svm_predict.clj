@@ -73,19 +73,20 @@
         has-required-keys (fn [x] (every? (comp not nil? x) key-order))
         ]
 
-    (println "predictor keys:" key-order)
-
-    (fn [val]
-      (when (has-required-keys val)
-        (let [val (scale-inputs val)
-              val (map->sv val)
-              result (reduce + (map (fn [^double a sv]
-                                      (* a (kernel sv val))) alpha svs))
-              result (- result offset)
-              result (scale-output result)
-              ]
-          result)))))
-
+    (with-meta
+      (fn [val]
+        (when (has-required-keys val)
+          (let [val (scale-inputs val)
+                val (map->sv val)
+                result (reduce + (map (fn [^double a sv]
+                                        (* a (kernel sv val))) alpha svs))
+                result (- result offset)
+                result (scale-output result)
+                ]
+            result
+            )))
+      {:predictors key-order}
+      )))
 
 (defn load-predictor [file]
   (with-open [r (io/reader file)]
