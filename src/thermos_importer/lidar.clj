@@ -1,8 +1,7 @@
 (ns thermos-importer.lidar
   (:require [thermos-importer.geoio :as geoio]
             [thermos-importer.spatial :as spatial]
-            [thermos-importer.util :as util]
-            [thermos-importer.lidar :as lidar])
+            [thermos-importer.util :as util])
   (:import com.github.davidmoten.rtree.geometry.Geometries
            com.github.davidmoten.rtree.RTree
            [org.locationtech.jts.geom Coordinate GeometryFactory Polygon]
