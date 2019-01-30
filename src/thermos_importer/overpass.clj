@@ -20,7 +20,8 @@
 (def default-overpass-api "http://overpass-api.de/api/interpreter")
   ;;"http://overpass-api.de/api/interpreter")
 
-(defn query-name [area-name]
+(defn query-name [area-name & {:keys [include-buildings include-highways]
+                               :or {include-buildings true include-highways true}}]
   (let [area-query (cond
                      (.startsWith area-name "rel:")
                      (format "(rel(%s); map_to_area;) -> .a;" (.substring area-name 4))
@@ -30,13 +31,18 @@
                      (format "(area[name=%s];)->.a;" (pr-str area-name)))]
     (format "%s
   (
-  way[landuse] (area.a);
-  way[highway] (area.a);
-  way[building] (area.a);
-  rel[building] (area.a);
+  %s
+  %s
   );
-  out geom meta;" area-query)
-    ))
+  out geom meta;"
+            area-query
+            (if include-highways
+              "way[highway] (area.a);"
+              "")
+            
+            (if include-buildings
+              "way[landuse] (area.a); way[building] (area.a); rel[building] (area.a);"
+              ""))))
 
 (def geometry-factory
   (GeometryFactory. (org.locationtech.jts.geom.PrecisionModel.) 4326))
@@ -174,8 +180,16 @@
         (xml/parse)
         (:content))))
 
-(defn get-geometry [area-name & {:keys [overpass-api]}]
-  (let [oxml (query-overpass (query-name area-name) :overpass-api overpass-api)
+(defn get-geometry [area-name & {:keys [overpass-api
+                                        include-buildings
+                                        include-highways]
+                                 :or {include-buildings true
+                                      include-highways true
+                                      overpass-api default-overpass-api}}]
+  (let [oxml (query-overpass (query-name area-name
+                                         :include-buildings include-buildings
+                                         :include-highways include-highways)
+                             :overpass-api overpass-api)
 
         objects
         (keep
