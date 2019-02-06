@@ -3,7 +3,7 @@
             [clojure.string :as string]
             [clojure.set :refer [map-invert]]
             [thermos-importer.util :as util]
-            [thermos-importer.util :refer [has-extension]])
+            [thermos-importer.util :refer [has-extension file-extension]])
   (:import  [java.security MessageDigest]
             [java.util Base64 Base64$Encoder]
             [org.locationtech.jts.geom Geometry Coordinate]
@@ -40,6 +40,7 @@
                                          (/ delta n))
                                       60000)))
                     (flush))))))))
+
 
 (defn- kebab-case [^String class-name]
   (.toLowerCase
@@ -119,6 +120,26 @@
          ::id (geometry->id geom))
     (dissoc feature ::geometry ::type ::id)))
 
+(defn- decode-crs [crs]
+  (cond
+    (instance? org.opengis.referencing.crs.CoordinateReferenceSystem crs) crs
+    (string? crs) (CRS/decode crs true)
+    (number? crs) (CRS/decode (str "EPSG:" crs) true)
+    :else (throw (IllegalArgumentException. (format "Not a CRS: %s" crs)))))
+
+(defn reprojector [from-crs to-crs]
+  (if (= from-crs to-crs) identity
+      (let [from-crs (decode-crs from-crs)
+            to-crs   (decode-crs to-crs)
+            transform (CRS/findMathTransform from-crs to-crs true)]
+        (fn [f]
+          (update-geometry f (JTS/transform (::geometry f) transform))))))
+
+(defn reproject [features to-crs]
+  (let [transform (reprojector (::crs features) to-crs)]
+    {::features (map transform (::features features))
+     ::crs to-crs}))
+
 (defn- feature->map [^Feature feature]
   (update-geometry
    (feature-attributes feature)
@@ -127,11 +148,10 @@
 (defn geom->map [geom]
   (update-geometry {} geom))
 
-(defn- read-from-store [store]
+(defn- read-from-store [store & {:keys [force-crs]}]
   (.setCharset store (StandardCharsets/UTF_8))
   (let [feature-source (->> store .getTypeNames first (.getFeatureSource store))
         crs (-> feature-source .getInfo .getCRS)
-        crs-id (CRS/lookupIdentifier crs true)
 
         features (for [feature (doall (->> feature-source
                                            .getFeatures
@@ -140,16 +160,24 @@
                        :when feature
                        :let [m (feature->map feature)]
                        :when (::geometry m)]
-                   m)]
+                   m)
+
+        features (if force-crs
+                   (map (reprojector crs force-crs) features)
+                   features)
+
+        crs-id (if force-crs
+                 force-crs
+                 (CRS/lookupIdentifier crs true))
+        ]
+
+    
     {::features features ::crs crs-id}))
 
-(defn- read-from-geojson [filename]
+(defn- read-from-geojson [filename & {:keys [force-crs]}]
   (let [io (FeatureJSON.)
-        crs-id (try (CRS/lookupIdentifier (.readCRS io filename) true)
-                 (catch Exception e
-                   (println "Error reading CRS from" filename)
-                   "EPSG:4326"))
-
+        crs (or (.readCRS io filename) (decode-crs "EPSG:4326"))
+        
         feature-collection (.readFeatureCollection io filename)
 
         features  (doall (->> feature-collection
@@ -160,7 +188,18 @@
                        :when feature
                        :let [m (feature->map feature)]
                        :when m]
-                   m)]
+                   m)
+
+        features (if force-crs
+                   (map (reprojector crs force-crs) features)
+                   features)
+
+        crs-id (or force-crs
+                   (try (CRS/lookupIdentifier crs true)
+                        (catch Exception e
+                          (println "Error reading CRS from" filename)
+                          "EPSG:4326")))
+        ]
     {::features features ::crs crs-id}))
 
 (defn read-from
@@ -172,25 +211,32 @@
 
   plus: keywordized fields from the feature
   "
-  [filename]
+  [filename & {:keys [force-crs]}]
 
   (let [filename (io/as-file filename)
         store (FileDataStoreFinder/getDataStore filename)]
     (cond
       store
       (try
-        (read-from-store store)
+        (read-from-store store :force-crs force-crs)
         (finally (.dispose store)))
 
       (has-extension filename "json")
-      (read-from-geojson filename)
+      (read-from-geojson filename :force-crs force-crs)
 
       :otherwise
       (throw (Exception. (str "Unable to read features from " filename)))
       )))
 
-(defn read-from-multiple [filenames]
-  (let [data (map read-from filenames)
+(def can-read?
+  (comp
+   #{"shp" "json" "geojson" "gpkg" "geopackage"}
+   file-extension))
+
+(defn read-from-multiple [filenames &
+                          {:keys [force-crs]}]
+  (let [filenames (filter can-read? filenames)
+        data (map #(read-from % :force-crs force-crs) filenames)
         crss (map ::crs data)]
     ;; TODO assuming they have a compatible CRS is a bad plan
     {::crs (first (filter identity crss))
@@ -372,14 +418,4 @@
     ))
 
 
-(defn reproject [features to-crs]
-  (let [input-crs (CRS/decode (::crs features))
-        output-crs (CRS/decode to-crs)]
-    (if (= input-crs output-crs)
-      features
-      (let [transform (CRS/findMathTransform input-crs output-crs true)]
-        {::features
-         (for [f features]
-           (update-geometry f (JTS/transform (::geometry f) transform)))
-         ::crs to-crs
-         }))))
+
