@@ -1,7 +1,8 @@
 (ns thermos-importer.util
   (:import [com.github.davidmoten.rtree.geometry Geometries Rectangle]
            [org.locationtech.jts.geom Geometry]
-           com.github.davidmoten.rtree.RTree))
+           com.github.davidmoten.rtree.RTree)
+  (:require [clojure.string :as s]))
 
 (defn- mutable-memoize
   [f #^java.util.Map map]
@@ -93,19 +94,30 @@
    m fields))
 
 (defprotocol HasExtension
+  (file-extension [x])
   (has-extension [s x]))
 
 (extend-type String
   HasExtension
+  (file-extension [s]
+    (and s
+         (let [i (.lastIndexOf s ".")]
+           (when (pos? i)
+             (.substring s (inc i))))))
+  
   (has-extension [s x]
     (and s (.endsWith s (str "." x)))))
 
 (extend-type java.io.File
   HasExtension
+  (file-extension [f]
+    (and f (file-extension (.getName f))))
   (has-extension [f x]
     (and f (has-extension (.getName f) x))))
 
 (extend-type java.nio.file.Path
   HasExtension
+  (file-extension [p]
+    (and p (file-extension (.toString (.getFileName p)))))
   (has-extension [p x]
     (and p (has-extension (.toString (.getFileName p)) x))))
