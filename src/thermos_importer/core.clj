@@ -118,7 +118,7 @@
         buildings
         (for [{id ::geoio/id
                geometry ::geoio/geometry
-               osm-id :osm_id
+               osm-id :osm-id
                name :name
                subtype :subtype
                area ::spatial/area
@@ -138,7 +138,7 @@
         ways
         (for [{id ::geoio/id
                geometry ::geoio/geometry
-               osm-id :osm_id
+               osm-id :osm-id
                name :name
                subtype :subtype
                length ::spatial/length

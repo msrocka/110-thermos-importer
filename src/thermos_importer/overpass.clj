@@ -144,31 +144,7 @@
   (let [tags (filter #(= :tag (:tag %)) (:content osm))
         tags  (into {} (for [{{k :k v :v} :attrs} tags] [(keyword k) v]))
         osm-id (get-in osm [:attrs :id])]
-    (assoc tags :osm_id osm-id)))
-
-(def highway-subtype :highway)
-
-(defn- building-subtype [find-landuse
-                         {b :building a :amenity :as feature}]
-  (or
-   (when-not (= b "yes") b)
-   a
-   (when-let [l (find-landuse feature)]
-     (str l " land"))))
-
-(defn- add-subtype [find-landuse feature]
-  (let [highway (:highway feature)
-        building (:building feature)
-
-        subtype
-        (cond
-          highway
-          (highway-subtype feature)
-          
-          building
-          (building-subtype find-landuse feature))
-        ]
-    (assoc feature :subtype subtype)))
+    (assoc tags :osm-id osm-id)))
 
 (defn query-overpass [query & {:keys [overpass-api]}]
   (let [query-body (str "data=" (URLEncoder/encode query "UTF-8"))
@@ -225,7 +201,10 @@
                  (first)
                  (:landuse))))
         ]
-    (map (partial add-subtype find-landuse)
-         candidates)))
+
+    (for [c candidates]
+      (let [landuse (find-landuse c)]
+        (assoc c :landuse landuse)))))
+
 
 
