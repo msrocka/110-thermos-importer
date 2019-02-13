@@ -272,18 +272,24 @@
             srid)))
 
 (defn infer-field-type [srid get-value values]
+  ;; it would be better to reduce over values and find the most general
+  ;; type mapping here.
   (let [value (first values)]
     (cond
       (instance? Geometry value)
       ;; this needs special thought as we need most general type of geometry
       {:type (geometry-field-type srid values) :value get-value}
 
+      ;; TODO this will fail for Longs
       (int? value)
       {:type "Integer"  :value get-value}
       
       (double? value)
       {:type "Double"  :value get-value}
 
+      (float? value)
+      {:type "Float"  :value get-value}
+      
       (keyword? value)
       {:type "String" :value #(let [x (get-value %)] (and x (str x)))}
 
@@ -292,9 +298,13 @@
 
       (boolean? value)
       {:type "Boolean" :value get-value}
+
+      (number? value)
+      {:type "Double"  :value (comp double get-value)}
       
       :otherwise
-      nil)))
+      (do (println "no inferred field type for value of type" (type value))
+          nil))))
 
 (defn clean-string-for-output [^String s]
   (.. s
@@ -349,7 +359,7 @@
         data (::features data)
 
         fields (or fields (infer-fields epsg data))
-
+        
         geo-writer (let [x (FeatureJSON. (GeometryJSON. 8))]
                      (.setEncodeNullValues x true)
                      (.setEncodeFeatureCollectionCRS x true)
