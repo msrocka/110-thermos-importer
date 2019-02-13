@@ -416,16 +416,13 @@
                geo-writer
                (make-feature-collection data)
                writer))))
-        
         ]
     
     (if chunk-size
       (doseq [[i data]
               (map-indexed vector (partition chunk-size data))]
         (write-chunk (str filename "." i) data))
-      (write-chunk filename data)
-      )
-    ))
+      (write-chunk filename data))))
 
 
 
