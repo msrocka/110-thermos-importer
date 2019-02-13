@@ -176,7 +176,9 @@
 
 (defn- read-from-geojson [filename & {:keys [force-crs]}]
   (let [io (FeatureJSON.)
-        crs (or (.readCRS io filename) (decode-crs "EPSG:4326"))
+        crs (or (try (.readCRS io filename)
+                     (catch Exception e))
+                (decode-crs "EPSG:4326"))
         
         feature-collection (.readFeatureCollection io filename)
 
@@ -221,7 +223,8 @@
         (read-from-store store :force-crs force-crs)
         (finally (.dispose store)))
 
-      (has-extension filename "json")
+      (or (has-extension filename "json")
+          (has-extension filename "geojson"))
       (read-from-geojson filename :force-crs force-crs)
 
       :otherwise
