@@ -33,14 +33,15 @@
                 (let [now (System/currentTimeMillis)
                       delta (- now start)]
                   (when (> delta 5000)
-                    (printf "\r%s [%s%%, %.1fm]"
+                    (printf "\n%s [%s%%, %.1fm]"
                             tag
                             (int (/ (* 100 n) total))
                             (float (/ (* (- total n)
                                          (/ delta n))
                                       60000)))
+                    (when (.isInterrupted (Thread/currentThread))
+                      (throw (InterruptedException.)))
                     (flush))))))))
-
 
 (defn- kebab-case [^String class-name]
   (.toLowerCase
