@@ -11,11 +11,10 @@
   "Create a radial basis kernel with parameter SIGMA."
   ([sigma]
    (fn [^doubles x ^doubles y]
-     (let [dim (count x)
-           dist (loop [i 0
-                       t (double 0)]
+     (let [dim (alength x)
+           dist (loop [i 0 t (double 0)]
                   (if (< i dim)
-                    (recur (inc i)
+                    (recur (unchecked-inc-int i)
                            (let [xi (aget x i)
                                  yi (aget y i)
                                  d (- xi yi)
@@ -59,9 +58,11 @@
         svs (transpose-map-of-lists (:svs json))
         map->sv #(double-array (for [k key-order] (get % k 0)))
         
-        svs (into-array (map map->sv svs))
+        svs ^"[[D" (into-array (map map->sv svs))
         
         alpha (double-array (:alpha json))
+
+        sv-count (alength svs)
 
         scale-inputs (input-scaler json)
         scale-output (output-scaler json)
@@ -78,8 +79,16 @@
         (when (has-required-keys val)
           (let [val (scale-inputs val)
                 val (map->sv val)
-                result (reduce + (map (fn [^double a sv]
-                                        (* a (kernel sv val))) alpha svs))
+                
+                result
+                (loop [idx 0 ret 0.0]
+                  (if (< idx sv-count)
+                    (recur (unchecked-inc-int idx)
+                           (+ ret
+                              (* (aget alpha idx)
+                                 (kernel (aget svs idx) val))))
+                    ret))
+
                 result (- result offset)
                 result (scale-output result)
                 ]
