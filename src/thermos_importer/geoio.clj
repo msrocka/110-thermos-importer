@@ -81,15 +81,14 @@
         (flush)
         nil)))
 
-(defn- feature-attributes [^Feature feature]
+(defn- feature-attributes [^Feature feature key-transform]
   (let [geometry-property (.getDefaultGeometryProperty feature)]
     (into {}
           (for [^Property p (.getProperties feature)
                 :when (not (= (.getName p)
                               (.getName geometry-property)))]
-            (do
-              [(keyword (.getLocalPart (.getName p)))
-               (.getValue p)])))))
+            [(key-transform (.getLocalPart (.getName p)))
+             (.getValue p)]))))
 
 (let [^MessageDigest md5 (MessageDigest/getInstance "MD5")
       ^Base64$Encoder base64 (.withoutPadding (Base64/getEncoder))
@@ -141,15 +140,15 @@
     {::features (map transform (::features features))
      ::crs to-crs}))
 
-(defn- feature->map [^Feature feature]
+(defn- feature->map [^Feature feature key-transform]
   (update-geometry
-   (feature-attributes feature)
+   (feature-attributes feature key-transform)
    (feature-geometry feature)))
 
 (defn geom->map [geom]
   (update-geometry {} geom))
 
-(defn- read-from-store [store & {:keys [force-crs]}]
+(defn- read-from-store [store & {:keys [force-crs key-transform]}]
   (.setCharset store (StandardCharsets/UTF_8))
   (let [feature-source (->> store .getTypeNames first (.getFeatureSource store))
         crs (-> feature-source .getInfo .getCRS)
@@ -159,7 +158,7 @@
                                            .features
                                            feature-iterator-seq))
                        :when feature
-                       :let [m (feature->map feature)]
+                       :let [m (feature->map feature key-transform)]
                        :when (::geometry m)]
                    m)
 
@@ -175,7 +174,7 @@
     
     {::features features ::crs crs-id}))
 
-(defn- read-from-geojson [filename & {:keys [force-crs]}]
+(defn- read-from-geojson [filename & {:keys [force-crs key-transform]}]
   (let [io (FeatureJSON.)
         crs (or (try (.readCRS io filename)
                      (catch Exception e))
@@ -189,7 +188,7 @@
         
         features (for [feature features
                        :when feature
-                       :let [m (feature->map feature)]
+                       :let [m (feature->map feature key-transform)]
                        :when m]
                    m)
 
@@ -214,19 +213,20 @@
 
   plus: keywordized fields from the feature
   "
-  [filename & {:keys [force-crs]}]
+  [filename & {:keys [force-crs key-transform]
+               :or {key-transform keyword}}]
 
   (let [filename (io/as-file filename)
         store (FileDataStoreFinder/getDataStore filename)]
     (cond
       store
       (try
-        (read-from-store store :force-crs force-crs)
+        (read-from-store store :force-crs force-crs :key-transform key-transform)
         (finally (.dispose store)))
 
       (or (has-extension filename "json")
           (has-extension filename "geojson"))
-      (read-from-geojson filename :force-crs force-crs)
+      (read-from-geojson filename :force-crs force-crs :key-transform key-transform)
 
       :otherwise
       (throw (Exception. (str "Unable to read features from " filename)))

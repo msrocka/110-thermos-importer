@@ -94,8 +94,11 @@
    m fields))
 
 (defprotocol HasExtension
-  (file-extension [x])
-  (has-extension [s x]))
+  (file-extension [f]
+    "Get the file extension from a file or a string or such, without dot")
+  
+  (has-extension [f e]
+    "True if the file type-thing `f` has extension `e`"))
 
 (extend-type String
   HasExtension
