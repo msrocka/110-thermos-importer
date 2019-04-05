@@ -22,27 +22,36 @@
 
 (defn query-name [area-name & {:keys [include-buildings include-highways]
                                :or {include-buildings true include-highways true}}]
-  (let [area-query (cond
-                     (.startsWith area-name "rel:")
-                     (format "(rel(%s); map_to_area;) -> .a;" (.substring area-name 4))
-                     (.startsWith area-name "way:")
-                     (format "(way(%s); map_to_area;) -> .a;" (.substring area-name 4))
-                     :default
-                     (format "(area[name=%s];)->.a;" (pr-str area-name)))]
-    (format "%s
-  (
-  %s
-  %s
-  );
-  out geom meta;"
-            area-query
-            (if include-highways
-              "way[highway] (area.a);"
+  {:pre [(or (string? area-name)
+             (and (vector? area-name)
+                  (= 4 (count area-name))
+                  (every? number? area-name)))]}
+  (let [[area-query area-filter]
+        (cond
+          (vector? area-name)
+          ["" (string/join "," area-name)]
+          (.startsWith area-name "relation:")
+          [(format "(rel(%s); map_to_area;) -> .a;" (.substring area-name 9))
+           "area.a"]
+          
+          (.startsWith area-name "way:")
+          [(format "(way(%s); map_to_area;) -> .a;" (.substring area-name 4))
+           "area.a"]
+          :default
+          [(format "(area[name=%s];)->.a;" (pr-str area-name))
+           "area.a"])
+        ]
+    (str area-query
+         "("
+         (if include-highways
+              (str "way[highway] (" area-filter ");")
               "")
-            
-            (if include-buildings
-              "way[landuse] (area.a); way[building] (area.a); rel[building] (area.a);"
-              ""))))
+         (if include-buildings
+              (str "way[landuse] ("area-filter");"
+                   "way[building] ("area-filter");"
+                   "rel[building] ("area-filter");")
+              "")
+         "); out geom meta;")))
 
 (def geometry-factory
   (GeometryFactory. (org.locationtech.jts.geom.PrecisionModel.) 4326))
@@ -148,9 +157,12 @@
 
 (defn query-overpass [query & {:keys [overpass-api]}]
   (let [query-body (str "data=" (URLEncoder/encode query "UTF-8"))
-        result (http/post (or overpass-api default-overpass-api)
-                          {:as :stream :body query-body})]
-    (println "Status" (:status result))
+        result (try (http/post (or overpass-api default-overpass-api)
+                               {:as :stream :body query-body})
+                    (catch Exception e
+                      (throw (ex-info "Error querying overpass"
+                                      {:overpass-query query}
+                                      e))))]
     (-> result
         (:body)
         (xml/parse)

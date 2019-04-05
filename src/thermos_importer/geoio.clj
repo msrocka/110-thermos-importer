@@ -428,5 +428,12 @@
         (write-chunk (str filename "." i) data))
       (write-chunk filename data))))
 
+(defn bounding-box ^org.locationtech.jts.geom.Envelope.
+  ([features]
+   (bounding-box features (org.locationtech.jts.geom.Envelope.)))
 
-
+  ([features box]
+   (doseq [{g ::geometry} (::features features)
+           ]
+     (.expandToInclude box (.getEnvelopeInternal g)))
+   box))
