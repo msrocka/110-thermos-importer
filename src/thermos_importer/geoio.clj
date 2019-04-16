@@ -437,3 +437,18 @@
            ]
      (.expandToInclude box (.getEnvelopeInternal g)))
    box))
+
+(defn explode-multis [shapes]
+  (let [explode-geometry
+        (fn [thing]
+          (case (::geoio/type thing)
+            (:multi-polygon :multi-line-string :multi-point)
+            (let [geom ^Geometry (::geoio/geometry thing)]
+              (for [n (range (.getNumGeometries geom))
+                    :let [^Geometry sub-geom (.getGeometryN geom n)]]
+                (geoio/update-geometry thing sub-geom)))
+            
+            [thing]))]
+    (update shapes
+            ::features
+            #(mapcat explode-geometry %))))
