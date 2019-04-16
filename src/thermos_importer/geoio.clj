@@ -449,6 +449,5 @@
                 (update-geometry thing sub-geom)))
             
             [thing]))]
-    (update shapes
-            ::features
-            #(mapcat explode-geometry %))))
+    (mapcat explode-geometry shapes)))
+
