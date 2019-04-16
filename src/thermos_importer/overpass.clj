@@ -76,6 +76,62 @@
 
 (defn- closed? [coordinates] (= (first coordinates) (last coordinates)))
 
+(defn- shares-endpoint? [a b]
+  (or (= (first a) (first b))
+      (= (first a) (last b))
+      (= (last a) (first b))
+      (= (last a) (last b))))
+
+(defn- join-at-endpoint
+  {:test #(do (assert (= (join-at-endpoint [1 2 3] [3 4 5])
+                         [1 2 3 4 5]))
+              (assert (= (join-at-endpoint [1 2 3] [5 4 3])
+                         [1 2 3 4 5]))
+              (assert (= (join-at-endpoint [3 2 1] [5 4 3])
+                         [5 4 3 2 1]))
+              (assert (= (join-at-endpoint [3 2 1] [3 4 5])
+                         [5 4 3 2 1])))}
+  [a b]
+  (cond (= (last a) (first b))
+        (into [] (concat a (rest b)))
+
+        (= (last b) (first a))
+        (into [] (concat b (rest a)))
+
+        (= (first a) (first b))
+        (into [] (concat (reverse b) (rest a)))
+
+        (= (last a) (last b))
+        (into [] (concat a (rest (reverse b))))))
+
+(defn- close-rings
+  "Given a set of rings which might be split up, try to close them."
+  {:test #(let [rings [[1 2 3] [3 4 5] [1 5]
+                       [7 8 9] [9 10 7]]
+                closed (close-rings rings)]
+            (assert (= 2 (count closed))))}
+  [rings]
+
+  (let [{closed true open false} (group-by closed? rings)]
+    (concat
+     closed
+
+     (:closed
+      (reduce
+       (fn [{closed :closed partial :partial} o]
+         ;; find a ring in partial that touches o
+         (if-let [adjacent (some #(and (shares-endpoint? % o) %) partial)]
+           (let [joined (join-at-endpoint adjacent o)]
+             (if (closed? joined)
+               {:closed (conj closed joined)
+                :partial (disj partial adjacent)}
+               {:closed closed
+                :partial (conj (disj partial adjacent) joined)}))
+           {:closed closed
+            :partial (conj partial o)}))
+       {:closed #{} :partial #{}}
+       open)))))
+
 (defmulti osm->geom :tag)
 
 (defmethod osm->geom :default [_] nil)
@@ -91,17 +147,14 @@
         
         inner-rings (->> inner-rings
                          (filter is-type-way?)
-                         (map way->coordinates))
+                         (map way->coordinates)
+                         (close-rings))
         
         outer-rings (->> outer-rings
                          (filter is-type-way?)
-                         (map way->coordinates))
-
-        ;; In-principle, the inner / outer rings can be split up into
-        ;; several parts. This is something to deal with later, but we
-        ;; can detect it by noting whether any of the rings are
-        ;; unclosed
-
+                         (map way->coordinates)
+                         (close-rings))
+        
         any-open-rings? (or (some (comp not closed?) inner-rings)
                             (some (comp not closed?) outer-rings))
 
@@ -128,11 +181,19 @@
            (into-array Polygon)
            (.createMultiPolygon geometry-factory))
 
-      ;; worse-case is a multipolygon with inner rings. For this, we
-      ;; need to associate the inners with the outers, which is
-      ;; annoying geometry.
       :otherwise
-      (println "WARNING: Difficult multipolygons in" rel))))
+      ;; assign the inner rings to whichever outer rings cover them
+      (let [outer-polygons (for [o outer-rings] [o (coordinates->polygon [o])])
+            inner-rings (group-by
+                         (fn [i]
+                           (let [p (coordinates->polygon [i])]
+                             (some (fn [[o p2]] (and (.covers p2 p) o)) outer-rings)))
+                         inner-rings)]
+        ;; make a multipolygon
+        (-> (for [[outer inners] inner-rings]
+              (coordinates->polygon (concat [outer] inners)))
+            (into-array Polygon)
+            (.createMultiPolygon geometry-factory))))))
 
 (defmethod osm->geom :way [way]
   (let [nodes (way->coordinates way)]
