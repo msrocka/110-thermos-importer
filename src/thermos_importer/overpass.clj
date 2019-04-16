@@ -69,10 +69,13 @@
        (map node->coordinate)))
 
 (defn- coordinates->polygon [[exterior & interior]]
-  (.createPolygon geometry-factory
-                  (.createLinearRing geometry-factory (into-array Coordinate exterior))
-                  (when-not (empty? interior)
-                    (into-array (map #(into-array Coordinate %) interior)))))
+  (.createPolygon
+   geometry-factory
+   (.createLinearRing geometry-factory (into-array Coordinate exterior))
+   (when-not (empty? interior)
+     (into-array (map #(.createLinearRing
+                        geometry-factory
+                        (into-array Coordinate %)) interior)))))
 
 (defn- closed? [coordinates] (= (first coordinates) (last coordinates)))
 
@@ -143,7 +146,7 @@
              (filter #(= (:tag % :member))) ;; just the members
              (group-by (comp :role :attrs)))
 
-        is-type-way? #(= "way" (:type %))
+        is-type-way? (comp #{"way"} :type :attrs)
         
         inner-rings (->> inner-rings
                          (filter is-type-way?)
@@ -183,17 +186,20 @@
 
       :otherwise
       ;; assign the inner rings to whichever outer rings cover them
-      (let [outer-polygons (for [o outer-rings] [o (coordinates->polygon [o])])
+      (let [outer-polygons (for [o outer-rings]
+                             [o (coordinates->polygon [o])])
+
             inner-rings (group-by
                          (fn [i]
                            (let [p (coordinates->polygon [i])]
-                             (some (fn [[o p2]] (and (.covers p2 p) o)) outer-rings)))
+                             (some (fn [[o p2]]
+                                     (and (.covers p2 p) o)) outer-polygons)))
                          inner-rings)]
         ;; make a multipolygon
-        (-> (for [[outer inners] inner-rings]
-              (coordinates->polygon (concat [outer] inners)))
-            (into-array Polygon)
-            (.createMultiPolygon geometry-factory))))))
+        (->> (for [[outer inners] inner-rings]
+               (coordinates->polygon (concat [outer] inners)))
+             (into-array Polygon)
+             (.createMultiPolygon geometry-factory))))))
 
 (defmethod osm->geom :way [way]
   (let [nodes (way->coordinates way)]
