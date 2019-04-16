@@ -68,14 +68,46 @@
        (filter #(= :nd (:tag %)))
        (map node->coordinate)))
 
-(defn- coordinates->polygon [[exterior & interior]]
-  (.createPolygon
-   geometry-factory
-   (.createLinearRing geometry-factory (into-array Coordinate exterior))
-   (when-not (empty? interior)
-     (into-array (map #(.createLinearRing
-                        geometry-factory
-                        (into-array Coordinate %)) interior)))))
+(defn- clockwise?
+  "True iff the given seq of coordinates are in clockwise order"
+  [coordinates]
+  (pos?
+   (reduce
+    +
+    (map
+     (fn [^Coordinate a ^Coordinate b]
+       (let [xa (.getX a) xb (.getX b)
+             ya (.getY a) yb (.getY b)]
+         (* (- xb xa) (+ yb ya))))
+     coordinates (rest coordinates)))))
+
+(defn- make-clockwise [coordinates]
+  (if (clockwise? coordinates)
+    coordinates (reverse coordinates)))
+
+(defn- make-anticlockwise [coordinates]
+  (if (clockwise? coordinates)
+    (reverse coordinates) coordinates))
+
+(defn- coordinates->polygon
+  "Given a list of rings, create a polygon
+
+  The first ring is the outer ring, and any remainders are inner
+  rings. This function will normalize the rings to follow the geojson
+  winding rules, so the outer ring will be made to go anticlockwise
+  and any inner rings to go clockwise."
+  [[exterior & interior]]
+  (let [exterior (make-anticlockwise exterior)
+        interior (map make-clockwise interior)]
+    
+    (.createPolygon
+     geometry-factory
+     (.createLinearRing geometry-factory
+                        (into-array Coordinate exterior))
+     (when-not (empty? interior)
+       (into-array (map #(.createLinearRing
+                          geometry-factory
+                          (into-array Coordinate %)) interior))))))
 
 (defn- closed? [coordinates] (= (first coordinates) (last coordinates)))
 
