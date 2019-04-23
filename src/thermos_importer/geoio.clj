@@ -295,7 +295,7 @@
       {:type "Float"  :value get-value}
       
       (keyword? value)
-      {:type "String" :value #(let [x (get-value %)] (and x (str x)))}
+      {:type "String" :value #(when-let [x (get-value %)] (str x))}
 
       (string? value)
       {:type "String" :value get-value}
@@ -304,7 +304,8 @@
       {:type "Boolean" :value get-value}
 
       (number? value)
-      {:type "Double"  :value (comp double get-value)}
+      {:type "Double"  :value #(when-let [v (get-value %)]
+                                 (double v))}
       
       :otherwise
       (do (println "no inferred field type for value of type" (type value))
@@ -433,8 +434,7 @@
    (bounding-box features (org.locationtech.jts.geom.Envelope.)))
 
   ([features box]
-   (doseq [{g ::geometry} (::features features)
-           ]
+   (doseq [{g ::geometry} (::features features)]
      (.expandToInclude box (.getEnvelopeInternal g)))
    box))
 
