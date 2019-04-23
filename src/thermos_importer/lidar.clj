@@ -11,26 +11,26 @@
            org.geotools.factory.Hints
            org.geotools.gce.geotiff.GeoTiffFormat
            org.geotools.geometry.DirectPosition2D
+           org.geotools.geometry.jts.ReferencedEnvelope
            org.geotools.geometry.jts.JTS
            org.geotools.referencing.CRS))
 
 (def *storey-height* 4)
 
+(defn load-raster* [raster]
+  (let [format (GridFormatFinder/findFormat raster)
+        hints (when (instance? GeoTiffFormat format)
+                (Hints. Hints/FORCE_LONGITUDE_FIRST_AXIS_ORDER true))
+        reader (.getReader format raster hints)]
+    (.read reader nil)))
+
 (def load-raster
-  (util/soft-memoize
-   (fn [raster]
-     ;; do the load here
-     (let [format (GridFormatFinder/findFormat raster)
-           hints (when (instance? GeoTiffFormat format)
-                   (Hints. Hints/FORCE_LONGITUDE_FIRST_AXIS_ORDER true))
-           reader (.getReader format raster hints)
-           ]
-       (.read reader nil)))))
+  (util/soft-memoize load-raster*))
 
 (defn get-raster-bounds [raster]
   (let [raster (load-raster raster)
         geom (.getEnvelope2D raster)]
-    ;; get the bounds out and put them in a rectangle
+
     (Geometries/rectangle
      (.getMinimum geom 0) (.getMinimum geom 1)
      (.getMaximum geom 0) (.getMaximum geom 1))))
@@ -277,6 +277,18 @@
          (pos? (::height feature)))
     (derive-3d-fields)))
 
+(defn envelope-covers-tree [raster-crs raster-tree
+                            shapes-crs ^org.locationtech.jts.geom.Envelope shapes-envelope]
+
+  (let [raster-mbr (.mbr raster-tree)]
+    (when (.isPresent raster-mbr)
+      (let [raster-mbr (.get raster-mbr)
+            raster-crs (CRS/decode raster-crs true)
+            transform (CRS/findMathTransform shapes-crs raster-crs)
+            shapes-envelope (JTS/transform shapes-envelope transform)
+            shapes-envelope (util/envelope->rect shapes-envelope)]
+        (.intersects raster-mbr shapes-envelope)))))
+
 (defn add-lidar-to-shapes
   "Given a raster index from `rasters->index` and a `shapes`, which is a
   geoio feature thingy i.e. a map with ::geoio/crs
@@ -287,12 +299,20 @@
   [shapes index & {:keys [buffer-size ground-level-threshold]
                    :or {buffer-size 1.5
                         ground-level-threshold -5}}]
-
+  
   (println (count (::geoio/features shapes)) "shapes to lidarize")
   
   (let [shapes-crs (::geoio/crs shapes)
+        shapes-crs* (CRS/decode shapes-crs true)
+        
         feature-index (util/index-features (::geoio/features shapes))
         lcc-transform (spatial/create-lcc shapes-crs (::geoio/geatures shapes))
+
+        shapes-box  (geoio/bounding-box shapes)
+        index       (filter (fn [[raster-crs raster-tree]]
+                              (envelope-covers-tree raster-crs raster-tree
+                                                    shapes-crs* shapes-box))
+                            index)
         
         add-footprint-and-perimeter (fn [feature]
                                       (let [shape (::geoio/geometry feature)
@@ -303,42 +323,42 @@
                                                 ::perimeter (.getLength shape)
                                                 })))
         ]
+
+    (println (reduce + (map #(.size (second %)) index))
+             "tiles to match against")
+    
     (as-> shapes shapes
       (geoio/update-features shapes :estimate-party-walls estimate-party-walls feature-index)
       (geoio/update-features shapes :footprint-and-perimeter add-footprint-and-perimeter)
       ;; remove any shapes with zero footprint
       (update shapes ::geoio/features #(filter (comp pos? ::footprint) %))
 
-      (cond-> shapes
-        index
+      (if index
+        ;; mangle shapes
         (reduce
          (fn [shapes [raster-crs raster-tree]]
-           (let [transform (CRS/findMathTransform
-                            (CRS/decode shapes-crs true)
-                            (CRS/decode raster-crs))]
-             (if index
-               (geoio/update-features
-                shapes :intersect-with-lidar
-                (fn [feature]
-                  (merge (try
-                           (shape->dimensions
-                            raster-tree
-                            (JTS/transform (::geoio/geometry feature) transform)
-                            
-                            buffer-size
-                            ground-level-threshold)
-                           (catch Exception e
-                             (printf
-                              "Error adding lidar data to %s: %s\n"
-                              (dissoc feature ::geoio/geometry)
-                              (.getMessage e))
-                             {}))
-                         ;; because feature is last in the merge if we
-                         ;; have already set ::lidar/height from
-                         ;; somewhere we keep the set value.
-                         ;; Unfortunately this includes
-                         ;; if ::lidar/height nil, so don't do that.
-                         feature))))))
-         shapes index))
+           (let [transform (CRS/findMathTransform shapes-crs* (CRS/decode raster-crs true))]
+             (geoio/update-features
+              shapes :intersect-with-lidar
+              (fn [feature]
+                (merge (try
+                         (shape->dimensions
+                          raster-tree
+                          (JTS/transform (::geoio/geometry feature) transform)
+                          
+                          buffer-size
+                          ground-level-threshold)
+                         (catch Exception e
+                           (printf
+                            "Error adding lidar data to %s: %s\n"
+                            (dissoc feature ::geoio/geometry)
+                            (.getMessage e))
+                           {}))
+
+                       feature)))))
+         shapes index)
+        
+        ;; do nothing
+        shapes)
       
       (geoio/update-features shapes :derive-fields derive-more-fields))))

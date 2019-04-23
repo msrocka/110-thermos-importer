@@ -1,6 +1,7 @@
 (ns thermos-importer.util
   (:import [com.github.davidmoten.rtree.geometry Geometries Rectangle]
            [org.locationtech.jts.geom Geometry]
+           org.locationtech.jts.geom.Envelope
            com.github.davidmoten.rtree.RTree)
   (:require [clojure.string :as s]))
 
@@ -49,17 +50,18 @@
                   (toIterable))]
     (.value entry)))
 
+(defn envelope->rect [^Envelope bbox]
+  (try (Geometries/rectangle
+        (.getMinX bbox) (.getMinY bbox)
+        (.getMaxX bbox) (.getMaxY bbox))
+       (catch IllegalArgumentException e
+         (println "Invalid bounding box"
+                  (.getMinX bbox) (.getMinY bbox)
+                  (.getMaxX bbox) (.getMaxY bbox))         
+         (throw e))))
+
 (defn geom->rect ^Rectangle [^Geometry geom]
-  (let [bbox (.getEnvelopeInternal geom)]
-    (try (Geometries/rectangle
-          (.getMinX bbox) (.getMinY bbox)
-          (.getMaxX bbox) (.getMaxY bbox))
-         (catch IllegalArgumentException e
-           (println "Invalid bounding box"
-                    (.getMinX bbox) (.getMinY bbox)
-                    (.getMaxX bbox) (.getMaxY bbox)
-                    geom)
-           (throw e)))))
+  (envelope->rect (.getEnvelopeInternal geom)))
 
 (defn seq-counter 
   "calls callback after every n'th entry in sequence is evaluated. 
