@@ -1,7 +1,8 @@
 (ns thermos-importer.spatial
   (:refer-clojure :exclude [cond])
   (:require [thermos-importer.geoio :as geoio]
-            [better-cond.core :refer [cond]])
+            [better-cond.core :refer [cond]]
+            [clojure.tools.logging :as log])
   (:import [com.github.davidmoten.rtree RTree Entry]
            [com.github.davidmoten.rtree.geometry Geometries Rectangle]
 
@@ -78,7 +79,10 @@
 
 (defn- features-intersect? [{^Geometry a ::geoio/geometry}
                             {^Geometry b ::geoio/geometry}]
-  (.intersects a b))
+  (try (.intersects a b)
+       (catch Exception e
+         (log/error e "Intersecting features produced an exception, possibly due to invalid geometry")
+         false)))
 
 (defn- feature-intersections [index feature]
   (->> feature ;; take the feature
