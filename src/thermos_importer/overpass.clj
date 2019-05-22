@@ -311,6 +311,10 @@
                  (filter #(.intersects geom (::geoio/geometry %)))
                  (first)
                  (:landuse))))
+
+        ;; remove any invalid geometries
+        candidates
+        (filter #(.isValid (::geoio/geometry %)) candidates)
         ]
 
     (for [c candidates]
