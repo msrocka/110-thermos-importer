@@ -3,7 +3,8 @@
             [clojure.string :as string]
             [clojure.set :refer [map-invert]]
             [thermos-importer.util :as util]
-            [thermos-importer.util :refer [has-extension file-extension]])
+            [thermos-importer.util :refer [has-extension file-extension]]
+            [cljts.core :as jts])
   (:import  [java.security MessageDigest]
             [java.util Base64 Base64$Encoder]
             [org.locationtech.jts.geom Geometry Coordinate]
@@ -43,20 +44,6 @@
                       (throw (InterruptedException.)))
                     (flush))))))))
 
-(defn- kebab-case [^String class-name]
-  (.toLowerCase
-   (.replaceAll class-name "(.)([A-Z])" "$1-$2")))
-
-(defn geometry-type [^Geometry geometry]
-  (let [type (.getGeometryType geometry)]
-    (case type
-      "Polygon" :polygon
-      "MultiPolygon" :multi-polygon
-      "MultiPoint" :multi-point
-      "LineString" :line-string
-      "MultiLineString" :multi-line-string
-      (keyword (kebab-case type)))))
-
 (defn- feature-iterator-seq
   "Make a feature iterator into a lazy sequence.
   Note that if you do not exhaust the sequence the iterator will not be closed.
@@ -71,12 +58,7 @@
 
 (defn- feature-geometry [^SimpleFeature feature]
   (if-let [^Geometry geometry (.getDefaultGeometry feature)]
-    (let [n (.getNumGeometries geometry)]
-      (if (and (= n 1)
-               (#{:multi-point :multi-line-string :multi-polygon}
-                (geometry-type geometry)))
-        (.getGeometryN geometry 0)
-        geometry))
+    (jts/make-singular geometry)
     (do (println "Feature has missing geometry" feature)
         (flush)
         nil)))
@@ -90,34 +72,15 @@
             [(key-transform (.getLocalPart (.getName p)))
              (.getValue p)]))))
 
-(let [^MessageDigest md5 (MessageDigest/getInstance "MD5")
-      ^Base64$Encoder base64 (.withoutPadding (Base64/getEncoder))
-      ]
-  (defn geometry->id [^Geometry geometry]
-    (.reset md5)
-    (.update md5 (.getBytes (.getGeometryType geometry)))
-    (doseq [^Coordinate c (.getCoordinates geometry)]
-      (let [x (Double/doubleToLongBits (.-x c))
-            y (Double/doubleToLongBits (.-y c))]
-        (.update md5 (unchecked-byte (bit-and 0xFF x)))
-        (.update md5 (unchecked-byte (bit-and 0xFF (bit-shift-right x 8))))
-        (.update md5 (unchecked-byte (bit-and 0xFF (bit-shift-right x 16))))
-        (.update md5 (unchecked-byte (bit-and 0xFF (bit-shift-right x 24))))
-        (.update md5 (unchecked-byte (bit-and 0xFF y)))
-        (.update md5 (unchecked-byte (bit-and 0xFF (bit-shift-right y 8))))
-        (.update md5 (unchecked-byte (bit-and 0xFF (bit-shift-right y 16))))
-        (.update md5 (unchecked-byte (bit-and 0xFF (bit-shift-right y 24))))))
-    ;; Throw away some bytes. This should give us 16 * 6 bits = 96
-    ;; collision probability for 60 million objects of around
-    ;; 2e-14 which is probably good enough.
-    (.substring (.encodeToString base64 (.digest md5)) 0 16)))
+(defn geometry->id [geometry]
+  (jts/ghash geometry))
 
 (defn update-geometry [feature ^Geometry geom]
   (if geom
     (assoc feature
          ::geometry geom
-         ::type (geometry-type geom)
-         ::id (geometry->id geom))
+         ::type (jts/geometry-type geom)
+         ::id (jts/ghash geom))
     (dissoc feature ::geometry ::type ::id)))
 
 (defn- decode-crs [crs]

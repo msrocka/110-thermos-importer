@@ -22,5 +22,7 @@
   clj-http {:mvn/version"3.9.0"}
   
   better-cond {:mvn/version"1.0.1"}
+
+  cljsjs/jsts {:mvn/version "1.6.0-0"}
   }}
 
