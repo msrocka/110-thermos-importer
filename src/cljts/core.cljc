@@ -268,8 +268,6 @@
         line-tail (concat [split-coordinate] line-tail)
         ]
 
-    (println line-head "-" split-coordinate "-" line-tail)
-    
     ;; now we want to check if either line-head or line-tail is 2 of same point
     ;; in which case we yield just the other
 
