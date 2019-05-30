@@ -55,10 +55,9 @@
         (.getMinX bbox) (.getMinY bbox)
         (.getMaxX bbox) (.getMaxY bbox))
        (catch IllegalArgumentException e
-         (println "Invalid bounding box"
-                  (.getMinX bbox) (.getMinY bbox)
-                  (.getMaxX bbox) (.getMaxY bbox))         
-         (throw e))))
+         (throw (ex-info "Invalid bounding box for rectangle"
+                         {:bounding-box bbox}
+                         e)))))
 
 (defn geom->rect ^Rectangle [^Geometry geom]
   (envelope->rect (.getEnvelopeInternal geom)))

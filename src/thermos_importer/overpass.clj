@@ -305,7 +305,12 @@
         
         find-landuse
         (fn [{geom ::geoio/geometry :as a}]
-          (let [rect (util/geom->rect geom)
+          (let [rect (try (util/geom->rect geom)
+                          (catch Exception e
+                            (throw (ex-info "Error looking up land-use for OSM object"
+                                            {:entity a}
+                                            e))))
+                
                 possibles (util/search-rtree landuse-rtree rect)]
             (->> possibles
                  (filter #(.intersects geom (::geoio/geometry %)))
@@ -314,9 +319,10 @@
 
         ;; remove any invalid geometries
         candidates
-        (filter #(.isValid (::geoio/geometry %)) candidates)
+        (filter #(and (.isValid (::geoio/geometry %))
+                      (not (.isEmpty (::geoio/geometry %))))
+                candidates)
         ]
-
     (for [c candidates]
       (let [landuse (find-landuse c)]
         (assoc c :landuse landuse)))))
