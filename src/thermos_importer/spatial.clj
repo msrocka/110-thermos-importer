@@ -89,13 +89,10 @@
        (feature-overlaps index) ;; find things which could intersect
        (filter (partial features-intersect? feature)))) ;; restrict to things which do
 
-(defn create-lcc
-  "Create a Lambert Conformal Confic projection centred on the bounding
-  box of the given set of features, which should be in a lat-lon
-  projection, probably 4326."
-  ^MathTransform
-  [input-crs features]
-  (let [input-crs (CRS/decode input-crs)
+(defn sensible-projection
+  "Create a projection of a certain type for the given features in their input CRS"
+  [type input-crs features]
+  (let [input-crs (CRS/decode input-crs true)
         ^Envelope2D bounding-box
         (reduce (fn ^Envelope2D [^Envelope2D box feat]
                   (.include box (JTS/getEnvelope2D
@@ -105,16 +102,14 @@
                 (Envelope2D.)
                 features)
 
-        ;; this is lambert conformal conic, maybe albers equal area
-        ;; would be better? The lines are still squiffy in this, no
-        ;; idea why.  Maybe I need to make some test data with 1 road
-        ;; and 1 building in it.
-        
-        parallel-1 (.getMinimum bounding-box 1)
-        parallel-2 (.getMaximum bounding-box 1)
-        latitude-origin (.getMedian bounding-box 1)
-        longitude-origin (.getMedian bounding-box 0)
-        wkt (format "PROJCS[\"Lambert_Conformal_Conic\",
+        wkt
+        (case type
+          :lambert-conformal-conic
+          (let [parallel-1 (.getMinimum bounding-box 1)
+                parallel-2 (.getMaximum bounding-box 1)
+                latitude-origin (.getMedian bounding-box 1)
+                longitude-origin (.getMedian bounding-box 0)]
+            (format "PROJCS[\"Lambert_Conformal_Conic\",
     GEOGCS[\"GCS_European_1950\",
         DATUM[\"European_Datum_1950\",
             SPHEROID[\"International_1924\",6378388,297]],
@@ -132,9 +127,29 @@
                     parallel-1
                     parallel-2
                     latitude-origin
-                    )
-        ]
-    (println "Reproject to" wkt)
+                    ))
+          :azimuthal-equidistant
+          
+          (let [latitude-origin (.getMedian bounding-box 1)
+                longitude-origin (.getMedian bounding-box 0)]
+            (format "PROJCS[\"unnamed\",
+    GEOGCS[\"WGS 84\",
+        DATUM[\"unknown\",
+            SPHEROID[\"WGS84\",6378137,298.257223563]],
+        PRIMEM[\"Greenwich\",0],
+        UNIT[\"degree\",0.0174532925199433]],
+    PROJECTION[\"Azimuthal_Equidistant\"],
+    PARAMETER[\"latitude_of_center\",%f],
+    PARAMETER[\"longitude_of_center\",%f],
+    PARAMETER[\"false_easting\",0],
+    PARAMETER[\"false_northing\",0],
+    UNIT[\"Meter\", 1.0]]"
+                    latitude-origin
+                    longitude-origin
+                    ))
+          
+          (throw (ex-info "Unknown type of projection"
+                          {:type type})))]
     (CRS/findMathTransform input-crs (CRS/parseWKT wkt) true)))
 
 ;; it seems like this does reproject into metres, but it doesn't make
@@ -153,7 +168,7 @@
 (defn add-connections
   [crs buildings noded-paths]
   (println "Connect" (count buildings) "with" (count noded-paths))
-  (let [transform (create-lcc crs buildings)
+  (let [transform (sensible-projection :azimuthal-equidistant crs buildings)
         buildings (reproject buildings transform)
         noded-paths (reproject noded-paths transform)
 
