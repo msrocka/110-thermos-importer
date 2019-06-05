@@ -306,7 +306,9 @@
         shapes-crs* (CRS/decode shapes-crs true)
         
         feature-index (util/index-features (::geoio/features shapes))
-        lcc-transform (spatial/create-lcc shapes-crs (::geoio/geatures shapes))
+        sensible-transform (spatial/sensible-projection
+                            :azimuthal-equidistant ;; not sure
+                            shapes-crs (::geoio/geatures shapes))
 
         shapes-box  (geoio/bounding-box shapes)
         index       (filter (fn [[raster-crs raster-tree]]
@@ -316,7 +318,7 @@
         
         add-footprint-and-perimeter (fn [feature]
                                       (let [shape (::geoio/geometry feature)
-                                            shape (JTS/transform shape lcc-transform)]
+                                            shape (JTS/transform shape sensible-transform)]
                                         (merge feature
                                                {::num-samples 0
                                                 ::footprint (.getArea shape)
