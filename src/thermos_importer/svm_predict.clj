@@ -26,23 +26,20 @@
 (defn- kernel-fn [json]
   (-> json :kpar :sigma rbf))
 
-(defn- input-scaler [json]
+(defn- input-scaler [key-order json]
   (let [offsets (-> json :scaling :x.scale :scaled:center)
-        factors (-> json :scaling :x.scale :scaled:scale)]
-    #(reduce-kv
-      (fn [m k v]
-        (let [offset (get offsets k 0)
-              factor (get factors k 1)
-              result (cond
-                       (number? v)
-                       (/ (- v offset) factor)
-                       (boolean? v)
-                       (/ (- (if v 1 0) offset) factor)
-                       :otherwise v)]
-          
-          (assoc m k result)))
-      {}
-      %)))
+        factors (-> json :scaling :x.scale :scaled:scale)
+        offsets (into-array (for [k key-order]
+                              (get offsets k 0)))
+        factors (into-array (for [k key-order]
+                              (get factors k 1)))]
+    (fn [sv]
+      (dotimes [i (alength sv)]
+        (aset sv i
+              (/ (- (aget sv i)
+                    (aget offsets i))
+                 (aget factors i))))
+      sv)))
 
 (defn- output-scaler [json]
   (let [^double offset (-> json :scaling :y.scale :scaled:center)
@@ -51,12 +48,21 @@
       (+ offset (* factor x)))))
 
 (defn predictor
-  "Create a predictor function from some json from R's libsvm wrpaper"
+  "Create a predictor function from some json from R's libsvm wrpaper
+  The predictor function returns two values in a double array.
+  The first is the value of the SVM output.
+  The second is the value of the scaled input dimension having largest absolute value.
+  If this value is very large, then the input is unusual on some dimension or other.
+  "
   [json]
 
   (let [key-order (sort (keys (:svs json)))
         svs (transpose-map-of-lists (:svs json))
-        map->sv #(double-array (for [k key-order] (get % k 0)))
+        map->sv #(double-array (for [k key-order]
+                                 (let [v (get % k 0)]
+                                   (if (boolean? v)
+                                     (if v 1 0)
+                                     v))))
         
         svs ^"[[D" (into-array (map map->sv svs))
         
@@ -64,43 +70,43 @@
 
         sv-count (alength svs)
 
-        scale-inputs (input-scaler json)
+        scale-inputs (input-scaler key-order json)
         scale-output (output-scaler json)
 
         kernel (kernel-fn json)
         
-        offset (:offset json)
+        offset (double (:offset json))
 
-        has-required-keys (fn [x] (every? (comp not nil? x) key-order))
-        ]
-
+        has-required-keys (fn [x] (every? (comp not nil? x) key-order))]
     (with-meta
-      (fn [val]
-        (when (has-required-keys val)
-          (let [val (scale-inputs val)
-                val (map->sv val)
-                
+      (fn [input]
+        #dbg (when (has-required-keys input)
+          (let [input (map->sv input)
+                input (scale-inputs input)
+
                 result
                 (loop [idx 0 ret 0.0]
                   (if (< idx sv-count)
                     (recur (unchecked-inc-int idx)
                            (+ ret
                               (* (aget alpha idx)
-                                 (kernel (aget svs idx) val))))
+                                 (kernel (aget svs idx) input))))
                     ret))
 
                 result (- result offset)
                 result (scale-output result)
+                out (make-array Double/TYPE 2)
                 ]
-            result
-            )))
-      {:predictors key-order}
-      )))
+            (aset out 0 result)
+            (aset out 1 (areduce input i absmax 0.0 (Math/max
+                                                     absmax
+                                                     (Math/abs (aget input i)))))
+            out)))
+      {:predictors key-order})))
 
 (defn load-predictor [file]
   (with-open [r (io/reader file)]
     (predictor (json/read r :key-fn keyword))))
-
 
 
 ;; (def some-json (json/read-str (slurp "/home/hinton/temp/svm.json") :key-fn keyword))
