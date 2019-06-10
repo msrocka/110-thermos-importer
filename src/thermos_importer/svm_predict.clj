@@ -79,29 +79,28 @@
 
         has-required-keys (fn [x] (every? (comp not nil? x) key-order))]
     (with-meta
-      (fn [input]
-        #dbg (when (has-required-keys input)
-          (let [input (map->sv input)
-                input (scale-inputs input)
+      (when (has-required-keys input)
+        (let [input (map->sv input)
+              input (scale-inputs input)
 
-                result
-                (loop [idx 0 ret 0.0]
-                  (if (< idx sv-count)
-                    (recur (unchecked-inc-int idx)
-                           (+ ret
-                              (* (aget alpha idx)
-                                 (kernel (aget svs idx) input))))
-                    ret))
+              result
+              (loop [idx 0 ret 0.0]
+                (if (< idx sv-count)
+                  (recur (unchecked-inc-int idx)
+                         (+ ret
+                            (* (aget alpha idx)
+                               (kernel (aget svs idx) input))))
+                  ret))
 
-                result (- result offset)
-                result (scale-output result)
-                out (make-array Double/TYPE 2)
-                ]
-            (aset out 0 result)
-            (aset out 1 (areduce input i absmax 0.0 (Math/max
-                                                     absmax
-                                                     (Math/abs (aget input i)))))
-            out)))
+              result (- result offset)
+              result (scale-output result)
+              out (make-array Double/TYPE 2)
+              ]
+          (aset out 0 result)
+          (aset out 1 (areduce input i absmax 0.0 (Math/max
+                                                   absmax
+                                                   (Math/abs (aget input i)))))
+          out))
       {:predictors key-order})))
 
 (defn load-predictor [file]
