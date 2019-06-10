@@ -2,7 +2,8 @@
   (:refer-clojure :exclude [cond])
   (:require [thermos-importer.geoio :as geoio]
             [better-cond.core :refer [cond]]
-            [clojure.tools.logging :as log])
+            [clojure.tools.logging :as log]
+            [cljts.core :as jts])
   (:import [com.github.davidmoten.rtree RTree Entry]
            [com.github.davidmoten.rtree.geometry Geometries Rectangle]
 
@@ -51,7 +52,9 @@
 
     index))
 
-(defn index->features [index]
+(defn index->features
+  "Given an index, return a seq of the features in it (not in a geoio map, just features)"
+  [index]
   (map (fn [^Entry e] (.value e))
        (let [^RTree index @index]
          (-> index .entries .toBlocking .toIterable))))
@@ -152,30 +155,41 @@
                           {:type type})))]
     (CRS/findMathTransform input-crs (CRS/parseWKT wkt) true)))
 
-;; it seems like this does reproject into metres, but it doesn't make
-;; the connectors look perpendicular?
+(defn reproject-1 [feature ^MathTransform transform]
+  (let [^Geometry g (::geoio/geometry feature)
+        g2 (JTS/transform g transform)
+        id2 (geoio/geometry->id g2)]
+    (assoc feature
+           ::geoio/id id2
+           ::geoio/geometry g2)))
+
 (defn reproject [features ^MathTransform transform]
   (map
-   (fn [feature]
-     (let [^Geometry g (::geoio/geometry feature)
-           g2 (JTS/transform g transform)
-           id2 (geoio/geometry->id g2)]
-       (assoc feature
-              ::geoio/id id2
-              ::geoio/geometry g2)))
+   #(reproject-1 % transform)
    features))
 
 (defn add-connections
   [crs buildings noded-paths]
   (println "Connect" (count buildings) "with" (count noded-paths))
-  (let [transform (sensible-projection :azimuthal-equidistant crs buildings)
+  (let [reproject-endpoints (fn [paths transform]
+                              (for [path paths]
+                                (-> path
+                                    (update ::start-node reproject-1 transform)
+                                    (update ::end-node reproject-1 transform))))
+
+        transform (sensible-projection :azimuthal-equidistant crs buildings)
         buildings (reproject buildings transform)
-        noded-paths (reproject noded-paths transform)
+        
+        noded-paths (-> noded-paths
+                        (reproject transform)
+                        ;; we have to reproject the endpoints also, to
+                        ;; make IDs consistent. TODO there is a risk
+                        ;; here that this will break the noding?
+                        (reproject-endpoints transform))
 
-        building-nodes (atom {}) ;; maps building IDs to node IDs
-                                 ;; where they connect
 
-        _ (println "Creating path index")
+        building-nodes (atom {}) ;; maps building IDs to nodes where they connect
+
         path-index (features->index noded-paths)
 
         endpoints (fn [f] [(::start-node f) (::end-node f)])
@@ -183,7 +197,6 @@
         ;; these are all the unique vertices the paths touch
         nodes (set (mapcat endpoints noded-paths))
 
-        _ (println "Creating node index")
         ;; an index of all the vertices that exist
         node-index (features->index nodes)
 
@@ -246,7 +259,7 @@
                     ;; we need to add p-start and p-end to the path index
                     (index-insert! path-index p-start)
                     (index-insert! path-index p-end)
-
+                    
                     ;; we need to add new-node to the node index
                     (index-insert! node-index new-node)
 
@@ -266,10 +279,10 @@
                 ;; we need to add the connector's end node to the node index
                 (index-insert! node-index new-end-node)
                 ;; we need to write down the building connection
-                (swap! building-nodes update (::geoio/id b) conj (::geoio/id new-end-node)))
+                (swap! building-nodes update (::geoio/id b) conj new-end-node))
 
               ;; otherwise we just need to connect the building:
-              (swap! building-nodes update (::geoio/id b) conj (::geoio/id connect-to-node))
+              (swap! building-nodes update (::geoio/id b) conj connect-to-node)
               )))
 
         building-count
@@ -278,7 +291,6 @@
         buildings-done
         (atom 0)]
     
-    (println "Processing buildings")
     (doseq [building buildings]
       (cond
         ;; step 1: find any intersecting nodes and connect to those
@@ -288,7 +300,7 @@
         ;; connect the building directly to a node
         (swap! building-nodes
                assoc (::geoio/id building)
-               (map ::geoio/id intersecting-nodes))
+               intersecting-nodes)
 
         ;; step 2: there were no intersecting nodes, what about paths?
         :let [intersecting-paths (feature-intersections path-index building)]
@@ -320,24 +332,37 @@
     ;; information which is the revised set of paths and buildings. we
     ;; also stick on the length and area while we're here as we're in
     ;; the right coordinate system
-    (let [paths (index->features path-index)
+
+    (let [inverse-transform (.inverse transform)
+
+          paths (index->features path-index)
 
           add-length #(assoc % ::length (.getLength ^Geometry (::geoio/geometry %)))
           
           paths (map add-length paths)
-          
-          building-nodes @building-nodes
-          buildings (map
-                     #(assoc % ::connects-to-node (building-nodes (::geoio/id %)))
-                     buildings)
 
+          building-nodes @building-nodes
+          
+          ;; relate buildings to their connecting nodes
+          ;; we reproject the nodes back out to make their IDs good first.
+          buildings (for [building buildings]
+                      (assoc building ::connects-to-node
+                             (for [node (building-nodes (::geoio/id building))]
+                               (::geoio/id (reproject-1 node inverse-transform)))))
+
+          ;; swap to the output coordinate system for start/end nodes
           add-area #(assoc % ::area (.getArea ^Geometry (::geoio/geometry %)))
           buildings (map add-area buildings)
 
           ;; finally put it back into our input CRS
-          inverse-transform (.inverse transform)
           buildings (reproject buildings inverse-transform)
-          paths (reproject paths inverse-transform)
+
+          ;; to get the paths out we need to invert their endpoints as well.
+          ;; this is a bit wasteful as we have inverted a lot of them already
+          ;; when we did buildings above, but hey.
+          paths (-> paths
+                    (reproject inverse-transform)
+                    (reproject-endpoints inverse-transform))
           ]
       [buildings paths])))
 

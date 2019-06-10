@@ -28,7 +28,6 @@
 (def ^:dynamic *geometry-factory*
   #?(:clj
      (GeometryFactory. (PrecisionModel.) 4326)
-
      :cljs
      (jsts/geom.GeometryFactory.)))
 
@@ -76,8 +75,12 @@
   ([^double x ^double y]
    (create-point (create-coordinate x y))))
 
+(defn as-coordinate [x]
+  (cond (instance? Coordinate x) x
+        (vector? x) (create-coordinate (first x) (second x))))
+
 (defn coordinate-seq [coordinate-likes]
-  (seq coordinate-likes)) ;; not sure
+  (map as-coordinate coordinate-likes))
 
 (defn- clockwise?
   "True iff the given seq of coordinates are in clockwise order"
@@ -106,18 +109,20 @@
    (into-array Coordinate coordinates)))
 
 (defn create-polygon
-  [outer inners]
-  
-  (let [outer (coordinate-seq outer)
-        inner (map coordinate-seq inners)
-        outer (make-anticlockwise outer)
-        inner (map make-clockwise inner)]
-    (.createPolygon
-     *geometry-factory*
-     (create-linear-ring outer)
-     (into-array
-      LinearRing
-      (map create-linear-ring inner)))))
+  ([outer] (create-polygon outer nil))
+  ([outer inners]
+   
+   (let [outer (coordinate-seq outer)
+         inner (map coordinate-seq inners)
+         outer (make-anticlockwise outer)
+         inner (map make-clockwise inner)]
+     (.createPolygon
+      *geometry-factory*
+      (create-linear-ring outer)
+      (when-not (empty? outer)
+        (into-array
+         LinearRing
+         (map create-linear-ring inner)))))))
 
 (defn create-multipolygon
   [polygons]
@@ -173,60 +178,34 @@
 
 #?(:clj
    (let [^MessageDigest md5 (MessageDigest/getInstance "MD5")
-         ^Base64$Encoder base64 (.withoutPadding (Base64/getEncoder))]
+         ^Base64$Encoder base64 (.withoutPadding (Base64/getEncoder))
+         df (java.text.DecimalFormat. "0.00000000")
+         to-fixed #(.format df %)
+         ]
      (defn ghash [^Geometry geometry]
        (.reset md5)
-       (.update md5 (.getBytes (.toLowerCase (.getGeometryType geometry))))
+       (.update md5 (.getBytes (.toLowerCase (.getGeometryType geometry))
+                               java.nio.charset.StandardCharsets/UTF_8))
+
        (doseq [^Coordinate c (.getCoordinates geometry)]
-         (let [x (Double/doubleToLongBits (.-x c))
-               y (Double/doubleToLongBits (.-y c))]
-           (dotimes [i 8]
-             (->> (bit-shift-right x (* i 8))
-                  (bit-and 0xFF)
-                  (unchecked-byte)
-                  (.update md5)))
-           (dotimes [i 8]
-             (->> (bit-shift-right y (* i 8))
-                  (bit-and 0xFF)
-                  (unchecked-byte)
-                  (.update md5)))))
+         (.update md5 (.getBytes (to-fixed (.-x c)) java.nio.charset.StandardCharsets/UTF_8))
+         (.update md5 (.getBytes (to-fixed (.-y c)) java.nio.charset.StandardCharsets/UTF_8))
+         )
        ;; Throw away some bytes. This should give us 16 * 6 bits = 96
        ;; collision probability for 60 million objects of around
        ;; 2e-14 which is probably good enough.
        (.substring (.encodeToString base64 (.digest md5)) 0 16)))
 
-   ;; clojurescript equivalent; this may depend on byte order in an
-   ;; unsavoury way
    :cljs
-   (let [double-to-long-bits
-         (fn [d]
-           (let [buffer (js/ArrayBuffer. 8)
-                 num    (js/Float64Array. buffer)]
-             (aset num 0 d)
-             (js/Array.from (js/Int8Array. buffer))))
-
-         md5 (goog.crypt.Md5.)]
+   (let [md5 (goog.crypt.Md5.)]
      (defn ghash [geometry]
        (.reset md5)
        (.update md5 (.toLowerCase (.getGeometryType geometry)))
 
        (doseq [c (.getCoordinates geometry)]
-         (let [x (double-to-long-bits (.-x c))
-               y (double-to-long-bits (.-y c))]
-           (.update md5 x)
-           (.update md5 y)))
+         (.update md5 (.toFixed (.-x c) 8))
+         (.update md5 (.toFixed (.-y c) 8)))
        (.substring (base64/encodeByteArray (.digest md5)) 0 16))))
-
-
-(comment
-  (ghash (create-point 0 0))
-  ;; => "LKnKAOio3Dx9y6qq"
-  ;; this matches in the browser, hallelujah
-  (ghash (create-point 3 10))
-  ;; => "M5xdgRY/fEIiqoTM"
-  ;; same, we are winners
-  )
-
 
 (defn cut-line-string
   "Given a linestring geometry and a point geometry,
