@@ -264,7 +264,8 @@
              ::tot-surface-per-volume tot-surface-per-volume))
 
     (catch ArithmeticException e
-      (log/error e "deriving-3d-fields" feature)
+      (log/error e "deriving-3d-fields"
+                 (dissoc feature ::geoio/geometry))
       (throw e))))
 
 (defn- derive-more-fields [feature]

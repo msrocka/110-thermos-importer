@@ -4,7 +4,8 @@
             [clojure.set :refer [map-invert]]
             [thermos-importer.util :as util]
             [thermos-importer.util :refer [has-extension file-extension]]
-            [cljts.core :as jts])
+            [cljts.core :as jts]
+            [thermos-importer.geoio :as geoio])
   (:import  [java.security MessageDigest]
             [java.util Base64 Base64$Encoder]
             [org.locationtech.jts.geom Geometry Coordinate]
@@ -59,7 +60,7 @@
 (defn- feature-geometry [^SimpleFeature feature]
   (if-let [^Geometry geometry (.getDefaultGeometry feature)]
     (jts/make-singular geometry)
-    (do (println "Feature has missing geometry" feature)
+    (do (println "Feature has missing geometry" (::id feature))
         (flush)
         nil)))
 
