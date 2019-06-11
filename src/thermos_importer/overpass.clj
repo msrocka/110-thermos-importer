@@ -4,9 +4,8 @@
             [thermos-importer.geoio :as geoio]
             [thermos-importer.util :as util]
             [clojure.string :as string]
-            
-            )
-  
+            [clojure.tools.logging :as log]
+            [cljts.core :as jts])
   (:import [java.io ByteArrayInputStream]
            [java.net URLEncoder]
 
@@ -281,8 +280,11 @@
         objects
         (keep
          #(let [ts (osm-tags->map %)
-                g (osm->geom %)]
-            (when g
+                g (try (osm->geom %)
+                       (catch Exception e
+                         (log/warn e "Invalid geometry for OSM feature")
+                         nil))]
+            (when (jts/valid? g)
               (merge (geoio/geom->map g) ts)))
          oxml)
 
