@@ -4,8 +4,7 @@
             [clojure.set :refer [map-invert]]
             [thermos-importer.util :as util]
             [thermos-importer.util :refer [has-extension file-extension]]
-            [cljts.core :as jts]
-            [thermos-importer.geoio :as geoio])
+            [cljts.core :as jts])
   (:import  [java.security MessageDigest]
             [java.util Base64 Base64$Encoder]
             [org.locationtech.jts.geom Geometry Coordinate]
