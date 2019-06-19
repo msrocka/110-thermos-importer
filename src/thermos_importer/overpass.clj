@@ -5,6 +5,7 @@
             [thermos-importer.util :as util]
             [clojure.string :as string]
             [clojure.tools.logging :as log]
+            [clojure.test :as test]
             [cljts.core :as jts])
   (:import [java.io ByteArrayInputStream]
            [java.net URLEncoder]
@@ -117,13 +118,13 @@
       (= (last a) (last b))))
 
 (defn- join-at-endpoint
-  {:test #(do (assert (= (join-at-endpoint [1 2 3] [3 4 5])
+  {:test #(do (test/is (= (join-at-endpoint [1 2 3] [3 4 5])
                          [1 2 3 4 5]))
-              (assert (= (join-at-endpoint [1 2 3] [5 4 3])
+              (test/is (= (join-at-endpoint [1 2 3] [5 4 3])
                          [1 2 3 4 5]))
-              (assert (= (join-at-endpoint [3 2 1] [5 4 3])
+              (test/is (= (join-at-endpoint [3 2 1] [5 4 3])
                          [5 4 3 2 1]))
-              (assert (= (join-at-endpoint [3 2 1] [3 4 5])
+              (test/is (= (join-at-endpoint [3 2 1] [3 4 5])
                          [5 4 3 2 1])))}
   [a b]
   (cond (= (last a) (first b))
@@ -143,7 +144,7 @@
   {:test #(let [rings [[1 2 3] [3 4 5] [1 5]
                        [7 8 9] [9 10 7]]
                 closed (close-rings rings)]
-            (assert (= 2 (count closed))))}
+            (test/is (= 2 (count closed))))}
   [rings]
 
   (let [{closed true open false} (group-by closed? rings)]
