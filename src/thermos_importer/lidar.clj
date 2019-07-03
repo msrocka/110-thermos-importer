@@ -201,8 +201,7 @@
        "Error computing party walls for %s: %s\n"
        (dissoc feature ::geoio/geometry)
        (.getMessage e))
-      feature
-      )))
+      (assoc feature ::shared-perimeter 0))))
 
 (defn- derive-2d-fields [feature]
   (let [{shared-perimeter ::shared-perimeter

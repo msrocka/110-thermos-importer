@@ -401,16 +401,17 @@
      (.expandToInclude box (.getEnvelopeInternal g)))
    box))
 
-(defn explode-multis [shapes]
-  (let [explode-geometry
-        (fn [thing]
-          (case (::type thing)
-            (:multi-polygon :multi-line-string :multi-point)
-            (let [geom ^Geometry (::geometry thing)]
-              (for [n (range (.getNumGeometries geom))
-                    :let [^Geometry sub-geom (.getGeometryN geom n)]]
-                (update-geometry thing sub-geom)))
-            
-            [thing]))]
-    (mapcat explode-geometry shapes)))
+(defn explode-multi
+  "Given a feature map, if it is a multi-part geometry produce a list of single-part geometries for each part.
+  If it's a single part geometry, don't explode it."
+  [feature]
+  (case (::type feature)
+    (:multi-polygon :multi-line-string :multi-point)
+    (let [geom ^Geometry (::geometry feature)]
+      (for [n (range (.getNumGeometries geom))
+            :let [^Geometry sub-geom (.getGeometryN geom n)]]
+        (update-geometry feature sub-geom)))
+    [feature]))
+
+(defn explode-multis [shapes] (mapcat explode-multi shapes))
 
