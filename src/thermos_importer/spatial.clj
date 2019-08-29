@@ -7,7 +7,7 @@
   (:import [com.github.davidmoten.rtree RTree Entry]
            [com.github.davidmoten.rtree.geometry Geometries Rectangle]
 
-           [org.locationtech.jts.geom Geometry Envelope PrecisionModel GeometryFactory Coordinate]
+           [org.locationtech.jts.geom Geometry Point Envelope PrecisionModel GeometryFactory Coordinate]
            [org.locationtech.jts.operation.distance DistanceOp GeometryLocation]
            [org.locationtech.jts.noding
             SegmentString MCIndexNoder NodedSegmentString IntersectionAdder
@@ -25,6 +25,22 @@
 (def NEARNESS 500) ;; metres, since we go into our equal-area projection
 (def NEIGHBOURS 6) ;; number of neighbours to consider
 ;;(def coordinates (Class/forName "[Lorg.locationtech.jts.geom.Coordinate;"))
+
+
+(let [factory (GeometryFactory.)]
+  (defn- make-point [^Coordinate x]
+    (let [p (.createPoint factory x)]
+      (geoio/update-geometry {} p)))
+  
+  (defn- make-linestring ^Geometry [^"[Lorg.locationtech.jts.geom.Coordinate;" coords]
+    (.createLineString factory coords))
+
+  (defn- make-multipoint [coordinates]
+    (->> coordinates
+         (filter identity)
+         (map #(.createPoint factory %))
+         (into-array Point)
+         (.createMultiPoint factory))))
 
 (defn feature->rect ^Rectangle [feature]
   (let [^Geometry geometry (::geoio/geometry feature)
@@ -296,7 +312,7 @@
         connect-freely
         (fn [building path]
           (let [op (DistanceOp. (::geoio/geometry path)
-                                (::geoio/goemetry building))]
+                                (::geoio/geometry building))]
             {:path path
              :op op
              :distance (.distance op)
@@ -307,18 +323,17 @@
           (let [boundary ^Geometry (.getBoundary (::geoio/geometry building))
                 boundary-coords (.getCoordinates boundary)
                 connection-points (make-multipoint
-                                   (for [[a b] (partition 2 1 boundary-coords)]
-                                     (let [distance (.distance a b)]
-                                       (when (> distance 4)
-                                         (make-point
-                                          (Coordinate.
-                                           (/ (+ (.getX a)
-                                                 (.getX b)) 2.0)
-                                           (/ (+ (.getY a)
-                                                 (.getY b)) 2.0)))))))
-
-                solution (connect-freely connection-points path)]
-            (update solution :distance - 5.0)))
+                                   (for [[a b] (partition 2 1 boundary-coords)
+                                         :let [distance (.distance a b)]
+                                         :when (> distance 4)]
+                                     (Coordinate.
+                                      (/ (+ (.getX a)
+                                            (.getX b)) 2.0)
+                                      (/ (+ (.getY a)
+                                            (.getY b)) 2.0))))]
+            (when-not (.isEmpty connection-points)
+              (let [solution (connect-freely {::geoio/geometry connection-points} path)]
+                (update solution :distance - 5.0)))))
         ]
     
     (doseq [building buildings]
@@ -346,16 +361,17 @@
 
         :when-let [nearby-paths (feature-neighbours path-index building)]
         :let [connections
-              (concat
-               (map (partial connect-freely building) nearby-paths)
-               (map (partial connect-faces building) nearby-paths))
+              (filter identity
+                      (concat
+                       (map (partial connect-freely building) nearby-paths)
+                       (map (partial connect-faces building) nearby-paths)))
               
               sort-rule (if connect-to-connectors
                           :distance
                           (juxt :is-to-connector :distance))
               
               {nearest-path :path op :op}
-              (first (sort-by sort-rule distance-ops))
+              (first (sort-by sort-rule connections))
               ]
 
         nearest-path
@@ -415,16 +431,6 @@
    (.getCoordinates ^Geometry (::geoio/geometry feature))
    feature))
 
-(let [factory (GeometryFactory.)]
-  (defn- make-point [^Coordinate x]
-    (let [p (.createPoint factory x)]
-      (geoio/update-geometry {} p)))
-  
-  (defn- make-linestring ^Geometry [^"[Lorg.locationtech.jts.geom.Coordinate;" coords]
-    (.createLineString factory coords))
-
-  (defn- make-multipoint [points]
-    (.createMultiPoint factory (into-array Point (filter identity points)))))
 
 
 (defn- concat-linestrings [^Geometry a ^Geometry b]
