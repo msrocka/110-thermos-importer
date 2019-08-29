@@ -275,7 +275,7 @@
 (defn- just-node
   [ways-file buildings-file
    ways-out buildings-out
-   & {:keys [chunk-size omit-fields canonize-ids]
+   & {:keys [chunk-size omit-fields canonize-ids connect-to-connectors]
       :or {chunk-size nil}}
    ]
   (let [_ (println "Reading ways...")
@@ -302,7 +302,8 @@
         _ (do (printf "%d noded ways\n" (count ways))
               (flush))
 
-        [buildings ways] (spatial/add-connections ways-crs buildings ways)
+        [buildings ways] (spatial/add-connections ways-crs buildings ways
+                                                  :connect-to-connectors connect-to-connectors)
 
         _ (do (printf "%d connected ways\n" (count ways))
               (flush))
@@ -441,6 +442,7 @@
          (fn [m k v]
            (update m k conj v))]
         [nil "--canonize-ids" "Convert IDs to integers"]
+        [nil "--connect-to-connectors" "Allow connectors to connect to other connectors (if false, prefer non-connectors)"]
         [nil "--chunk-size CHUNK-SIZE" "Make geojson into chunks of this size"
          :parse-fn #(Integer/parseInt %)]]
        #(if (= 4 (count %))

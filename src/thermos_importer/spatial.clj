@@ -169,7 +169,8 @@
    features))
 
 (defn add-connections
-  [crs buildings noded-paths]
+  [crs buildings noded-paths & {:keys [connect-to-connectors]
+                                :or {connect-to-connectors false}}]
   (println "Connect" (count buildings) "with" (count noded-paths))
   (let [reproject-endpoints (fn [paths transform]
                               (for [path paths]
@@ -272,6 +273,7 @@
               (let [new-end-node (make-node (.getCoordinate on-b))
                     connector (make-path {::start-node connect-to-node
                                           ::end-node new-end-node
+                                          :connector true
                                           :subtype "Connector"}
                                          [split-point (.getCoordinate on-b)])]
                 ;; we need to add the connector to the path index
@@ -315,7 +317,13 @@
                                   (DistanceOp. (::geoio/geometry %)
                                                (::geoio/geometry building)))
                                 nearby-paths)
-              [nearest-path op] (first (sort-by #(.distance ^DistanceOp (second %)) distance-ops))
+              sort-rule (if connect-to-connectors
+                          #(.distance ^DistanceOp (second %))
+                          #(vector
+                            (:connector (first %))
+                            (.distance ^DistanceOp (second %))))
+              [nearest-path op]
+              (first (sort-by sort-rule distance-ops))
               ]
 
         nearest-path
