@@ -291,7 +291,35 @@
         (count buildings)
 
         buildings-done
-        (atom 0)]
+        (atom 0)
+
+        connect-freely
+        (fn [building path]
+          (let [op (DistanceOp. (::geoio/geometry path)
+                                (::geoio/goemetry building))]
+            {:path path
+             :op op
+             :distance (.distance op)
+             :is-to-connector (:connector path)}))
+
+        connect-faces
+        (fn [building path]
+          (let [boundary ^Geometry (.getBoundary (::geoio/geometry building))
+                boundary-coords (.getCoordinates boundary)
+                connection-points (make-multipoint
+                                   (for [[a b] (partition 2 1 boundary-coords)]
+                                     (let [distance (.distance a b)]
+                                       (when (> distance 4)
+                                         (make-point
+                                          (Coordinate.
+                                           (/ (+ (.getX a)
+                                                 (.getX b)) 2.0)
+                                           (/ (+ (.getY a)
+                                                 (.getY b)) 2.0)))))))
+
+                solution (connect-freely connection-points path)]
+            (update solution :distance - 5.0)))
+        ]
     
     (doseq [building buildings]
       (cond
@@ -311,18 +339,22 @@
         (doseq [path intersecting-paths] (split-connect-path! path building))
 
         ;; step 3: there were no intersecting paths, try a nearby path?
+
+        ;; In this condition we are going to be dropping a line, so we
+        ;; may also want to try connecting to midpoints of building
+        ;; faces instead of corners.
+
         :when-let [nearby-paths (feature-neighbours path-index building)]
-        :let [distance-ops (map #(vector
-                                  %
-                                  (DistanceOp. (::geoio/geometry %)
-                                               (::geoio/geometry building)))
-                                nearby-paths)
+        :let [connections
+              (concat
+               (map (partial connect-freely building) nearby-paths)
+               (map (partial connect-faces building) nearby-paths))
+              
               sort-rule (if connect-to-connectors
-                          #(.distance ^DistanceOp (second %))
-                          #(vector
-                            (:connector (first %))
-                            (.distance ^DistanceOp (second %))))
-              [nearest-path op]
+                          :distance
+                          (juxt :is-to-connector :distance))
+              
+              {nearest-path :path op :op}
               (first (sort-by sort-rule distance-ops))
               ]
 
@@ -389,7 +421,11 @@
       (geoio/update-geometry {} p)))
   
   (defn- make-linestring ^Geometry [^"[Lorg.locationtech.jts.geom.Coordinate;" coords]
-    (.createLineString factory coords)))
+    (.createLineString factory coords))
+
+  (defn- make-multipoint [points]
+    (.createMultiPoint factory (into-array Point (filter identity points)))))
+
 
 (defn- concat-linestrings [^Geometry a ^Geometry b]
   (let [coords-a (.getCoordinates a)
