@@ -185,8 +185,10 @@
    features))
 
 (defn add-connections
-  [crs buildings noded-paths & {:keys [connect-to-connectors]
-                                :or {connect-to-connectors false}}]
+  [crs buildings noded-paths & {:keys [connect-to-connectors shortest-face-length]
+                                :or {connect-to-connectors false
+                                     shortest-face-length 3}}]
+  
   (println "Connect" (count buildings) "with" (count noded-paths))
   (let [reproject-endpoints (fn [paths transform]
                               (for [path paths]
@@ -325,7 +327,7 @@
                 connection-points (make-multipoint
                                    (for [[a b] (partition 2 1 boundary-coords)
                                          :let [distance (.distance a b)]
-                                         :when (> distance 4)]
+                                         :when (> distance shortest-face-length)]
                                      (Coordinate.
                                       (/ (+ (.getX a)
                                             (.getX b)) 2.0)
