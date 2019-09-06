@@ -201,9 +201,11 @@
    file-extension))
 
 (defn read-from-multiple [filenames &
-                          {:keys [force-crs]}]
+                          {:keys [force-crs key-transform]
+                           :or {key-transform keyword}}]
   (let [filenames (filter can-read? filenames)
-        data (map #(read-from % :force-crs force-crs) filenames)
+        data (map #(read-from % :force-crs force-crs :key-transform key-transform)
+                  filenames)
         crss (map ::crs data)]
     ;; TODO assuming they have a compatible CRS is a bad plan
     {::crs (first (filter identity crss))
