@@ -7,6 +7,7 @@
            com.github.davidmoten.rtree.RTree
            [org.locationtech.jts.geom Coordinate GeometryFactory Polygon]
            [org.locationtech.jts.geom.util LineStringExtracter]
+           org.geotools.coverage.grid.GridCoverage2D
            org.geotools.coverage.grid.io.GridFormatFinder
            org.geotools.factory.Hints
            org.geotools.gce.geotiff.GeoTiffFormat
@@ -24,8 +25,10 @@
         reader (.getReader format raster hints)]
     (.read reader nil)))
 
-(def load-raster
-  (util/soft-memoize load-raster*))
+
+(let [load-it (util/soft-memoize load-raster*)]
+  (defn ^GridCoverage2D load-raster [raster]
+    (load-it raster)))
 
 (defn get-raster-bounds [raster]
   (let [raster (load-raster raster)
@@ -79,19 +82,18 @@
   "Sample coordinates within shape from raster.
   Presumes coords are in the raster's CRS."
   [raster coords]
-  (let [raster (load-raster raster)
+  (let [raster ^GridCoverage2D (load-raster raster)
         no-data (set (.getNoDataValues (.getSampleDimension raster 0)))]
-    
+
     (filter
      identity
      (for [[x y] coords]
-       (let [z (try (first
-                     (.evaluate raster
-                                (DirectPosition2D. x y)
-                                nil))
-                    (catch org.opengis.coverage.PointOutsideCoverageException e
-                      nil)
-                    )]
+       (let [position ^DirectPosition2D (DirectPosition2D. x y)
+             result (try
+                      (.evaluate raster position)
+                      (catch org.opengis.coverage.PointOutsideCoverageException e
+                        nil))
+             z (and result (aget result 0))]
          (when (and z (not (no-data z)))
            [x y z]))))))
 
@@ -351,6 +353,7 @@
                           buffer-size
                           ground-level-threshold)
                          (catch Exception e
+                           (.printStackTrace e)
                            (printf
                             "Error adding lidar data to %s: %s\n"
                             (dissoc feature ::geoio/geometry)
