@@ -9,7 +9,8 @@
             MultiPoint MultiPolygon]
            [org.locationtech.jts.operation.distance DistanceOp]
            [java.security MessageDigest]
-           [java.util Base64 Base64$Encoder]))
+           [java.util Base64 Base64$Encoder]
+           [org.geotools.geojson.geom GeometryJSON]))
   #?(:cljs (:require [cljsjs.jsts :as jsts]
                      [goog.crypt.Md5 :as Md5]
                      [goog.crypt.base64 :as base64])))
@@ -35,13 +36,20 @@
   #?(:cljs (jsts/io.GeoJSONReader. *geometry-factory*)))
 
 (def ^:dynamic *geojson-writer*
-  #?(:cljs (jsts/io.GeoJSONWriter. *geometry-factory*)))
+  #?(:cljs (jsts/io.GeoJSONWriter. *geometry-factory*)
+     :clj  (GeometryJSON.
+            (.getMaximumSignificantDigits
+             (.getPrecisionModel *geometry-factory*)))))
 
 (defn geom->json [geom]
   (and geom
        #?(:cljs (->> geom
                      (.write *geojson-writer*)
-                     (js/JSON.stringify)))))
+                     (js/JSON.stringify))
+          :clj  (let [sw (java.io.StringWriter.)]
+                  (.write *geojson-writer* geom sw)
+                  (.toString sw))
+          )))
 
 (defn json->geom [json]
   (and json (.read *geojson-reader* json)))
