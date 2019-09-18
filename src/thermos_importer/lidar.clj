@@ -16,7 +16,7 @@
            org.geotools.geometry.jts.JTS
            org.geotools.referencing.CRS))
 
-(def *storey-height* 4)
+(def ^:dynamic *storey-height* 4)
 
 (defn load-raster* [raster]
   (let [format (GridFormatFinder/findFormat raster)
