@@ -11,10 +11,10 @@
            [java.security MessageDigest]
            [java.util Base64 Base64$Encoder]
            [org.geotools.geojson.geom GeometryJSON]))
+  #?(:clj (:require [clojure.java.io :as io]))
   #?(:cljs (:require [cljsjs.jsts :as jsts]
                      [goog.crypt.Md5 :as Md5]
                      [goog.crypt.base64 :as base64])))
-
 
 #?(:cljs
    (do (def Geometry jsts/geom.Geometry)
@@ -41,6 +41,44 @@
             (.getMaximumSignificantDigits
              (.getPrecisionModel *geometry-factory*)))))
 
+(defn- coord->vec [^Coordinate c]
+  [(.getX c) (.getY c)])
+
+(defn- linestring->vec [^LineString ls]
+  (vec (map coord->vec (.getCoordinates ls))))
+
+(defn geom->map
+  "Convert a jts / jsts geometry into a clojure map that looks like the
+  geometry part of a geojson."
+  [^Geometry geom]
+
+  (let [type-string (.getGeometryType geom)]
+    (assoc
+     {:type type-string}
+
+     (if (= "GeometryCollection" type-string)
+         :geometries :coordinates)
+     
+     (case (.getGeometryType geom)
+       "Point"
+       (-> geom (.getCoordinate) (coord->vec))
+
+       "LineString"
+       (linestring->vec geom)
+       
+       "Polygon"
+       (vec (concat [(linestring->vec (.getExteriorRing geom))]
+                    (for [i (range (.getNumInteriorRing geom))]
+                      (linestring->vec (.getInteriorRingN geom i)))))
+       
+       ("MultiPoint"
+        "MultiLineString"
+        "MultiPolygon"
+        "GeometryCollection")
+       (vec (for [i (range (.getNumGeometries geom))]
+              (geom->map (.getGeometryN geom i)))))
+     )))
+
 (defn geom->json [geom]
   (and geom
        #?(:cljs (->> geom
@@ -52,7 +90,14 @@
           )))
 
 (defn json->geom [json]
-  (and json (.read *geojson-reader* json)))
+  (and json
+       #?(:cljs
+          (.read *geojson-reader* json)
+          :clj
+          (.read *geojson-writer*
+                 (java.io.StringReader. json)
+                 ))))
+
 
 (defn- kebab-case [^String class-name]
   (.toLowerCase
