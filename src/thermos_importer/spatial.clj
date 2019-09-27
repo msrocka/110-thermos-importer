@@ -189,7 +189,7 @@
                                 :or {connect-to-connectors false
                                      shortest-face-length 3}}]
   
-  (println "Connect" (count buildings) "with" (count noded-paths))
+  (log/info "Connect" (count buildings) "with" (count noded-paths))
   (let [reproject-endpoints (fn [paths transform]
                               (for [path paths]
                                 (-> path
@@ -380,9 +380,7 @@
         ;; can reuse the distanceop here to save a tiny bit of time
         (split-connect-path! nearest-path building op))
 
-      (swap! buildings-done inc)
-      (when (zero? (mod @buildings-done 1000))
-        (println @buildings-done "/" building-count)))
+      (swap! buildings-done inc))
 
     ;; at this point the node and path indices contain the network
     ;; structure and the building-nodes map contains the connection
@@ -472,7 +470,6 @@
   and collapses them together at junctions of degree 2 where this will
   not affect the properties of the resulting paths."
   [paths]
-  (println "Remove redundant vertices from" (count paths) "paths")
   (let [safe-inc #(inc (or % 0))
 
         paths-by-id (assoc-by ::geoio/id paths)
@@ -497,8 +494,6 @@
                                 ::geoio/id ::geoio/geometry ::start-node ::end-node)))))
              (into {}))
 
-        _ (println (count collapsible-vertices) "redundant vertices to remove")
-        
         find-new-name
         #(loop [new-names %1 id %2]
            (if (contains? new-names id)
@@ -528,11 +523,8 @@
                   _ (when (= (::geoio/id (::start-node new-path))
                            (::geoio/id (::end-node new-path))
                            )
-                      (println "Endpoints of new path collide")
-                      (println a)
-                      (println b)
-                      (println new-path)
-                      )
+                      (log/warn "Endpoints of new path collide"
+                                {:a a :b b :new-path new-path}))
                   
                   new-id (::geoio/id new-path)
 
@@ -567,7 +559,7 @@
 
     (.setSegmentIntersector noder intersector)
     (let [segments (map feature->segment-string paths)]
-      (println "Computing nodes...")
+      (log/info "Computing nodes...")
       (.computeNodes noder segments)
 
       (let [noded-segments (.getNodedSubstrings noder)
@@ -575,7 +567,7 @@
             _ (.dissolve dissolver noded-segments)
             noded-segments (.getDissolved dissolver)
             ]
-        (println "Noding completed" (count paths) "before noding"
+        (log/info "Noding completed" (count paths) "before noding"
                  (count noded-segments) "after noding")
 
         (collapse-paths

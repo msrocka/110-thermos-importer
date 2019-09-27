@@ -202,7 +202,7 @@
         ]
     (cond
       any-open-rings?
-      (println "WARNING: Open rings in" rel) ;; returns nil, as failure case
+      (log/warn "WARNING: Open rings in" rel) ;; returns nil, as failure case
 
       ;; A normal polygon, with maybe an inner ring
       one-outer-ring?
@@ -292,8 +292,8 @@
         {land-uses false candidates true}
         (group-by (comp nil? :landuse) objects)
 
-        _ (println (count candidates) "candidates"
-                   (count land-uses) "land uses")
+        _ (log/info (count candidates) "candidates"
+                    (count land-uses) "land uses")
 
         landuse-rtree
         (reduce
@@ -303,8 +303,6 @@
              (.add tree land-use rect)))
          (RTree/create)
          land-uses)
-        
-        _ (println "Made land-use index")
         
         find-landuse
         (fn [{geom ::geoio/geometry :as a}]

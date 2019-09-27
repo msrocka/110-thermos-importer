@@ -4,6 +4,7 @@
             [clojure.set :refer [map-invert]]
             [thermos-importer.util :as util]
             [thermos-importer.util :refer [has-extension file-extension]]
+            [clojure.tools.logging :as log]
             [cljts.core :as jts])
   (:import  [java.security MessageDigest]
             [java.util Base64 Base64$Encoder]
@@ -59,8 +60,7 @@
 (defn- feature-geometry [^SimpleFeature feature]
   (if-let [^Geometry geometry (.getDefaultGeometry feature)]
     (jts/make-singular geometry)
-    (do (println "Feature has missing geometry" (::id feature))
-        (flush)
+    (do (log/warn "Feature has missing geometry" (::id feature))
         nil)))
 
 (defn- feature-attributes [^Feature feature key-transform]
@@ -162,7 +162,7 @@
         crs-id (or force-crs
                    (try (CRS/lookupIdentifier crs true)
                         (catch Exception e
-                          (println "Error reading CRS from" filename)
+                          (log/error e "Error reading CRS from" filename)
                           "EPSG:4326")))
         ]
     {::features features ::crs crs-id}))
@@ -273,7 +273,7 @@
                                  (double v))}
       
       :otherwise
-      (do (println "no inferred field type for value of type" (type value))
+      (do (log/warn "no inferred field type for value of type" (type value))
           nil))))
 
 (defn clean-string-for-output [^String s]
@@ -380,7 +380,6 @@
           
           :default ;; geojson
           (fn [filename data]
-            (println "writing" filename "...")
             (with-open [writer (io/writer filename)]
               (.writeFeatureCollection
                geo-writer

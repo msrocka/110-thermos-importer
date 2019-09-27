@@ -13,13 +13,14 @@
             [clojure.set :as set]
             [clojure.data.json :as json]
             [thermos-importer.util :as util]
+            [clojure.tools.logging :as log]
             [thermos-importer.util :refer [has-extension]])
   (:import [org.locationtech.jts.geom Geometry]))
 
 (defn crs->srid [crs]
   (if (and crs (.startsWith crs "EPSG:"))
     (string/replace crs "EPSG:" "srid=")
-    (do (println "Unknown authority" crs) "srid=4326")))
+    (do (log/warn "Unknown authority" crs) "srid=4326")))
 
 (defn- try-parse-double [s]
   (try (Double/parseDouble s)
@@ -81,12 +82,12 @@
 
         crs "EPSG:4326"
 
-        _ (println "Querying overpass")
+        _ (log/info "Querying overpass")
         
         query-results (overpass/get-geometry area-name
                                              :overpass-api overpass-api)
 
-        _ (println "Processing results")
+        _ (log/info "Processing results")
         
         ;; split into buildings and ways
         {ways :line-string buildings :polygon}

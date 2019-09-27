@@ -48,17 +48,14 @@
   The index is a map from EPSG code to an Rtree of rasters that have that EPSG.
   "
   [rasters]
-  (println "Indexing rasters...")
+  (log/info "Indexing rasters...")
   
   (let [properties                      ; first lookup the properties for each raster
         (for [raster rasters]
           (let [crs (get-raster-crs raster)]
-            (printf "-> %s [%s]\r" (.getName raster) crs)
-            (flush)
             {:raster raster
              :bounds (get-raster-bounds raster)
              :crs crs}))
-
         by-crs                          ; bin them by CRS
         (group-by :crs properties)
 
@@ -70,7 +67,6 @@
               (.add index raster bounds))
             (RTree/create) rasters)])
         ]
-    (println)
     (into {} indices)))
 
 (defn- find-rasters
@@ -119,11 +115,6 @@
 
           footprint (.getArea shape)
           ]
-      (when (> mean-height 1000)
-        (let [heights (map last coords)]
-          (println mean-height)
-          (println (apply min heights) (apply max heights))))
-      
       {::perimeter perimeter
        ::footprint footprint
        ::ground-height ground
@@ -302,7 +293,7 @@
                    :or {buffer-size 1.5
                         ground-level-threshold -5}}]
   
-  (println (count (::geoio/features shapes)) "shapes to lidarize")
+  (log/info (count (::geoio/features shapes)) "shapes to lidarize")
   
   (let [shapes-crs (::geoio/crs shapes)
         shapes-crs* (CRS/decode shapes-crs true)
@@ -328,8 +319,7 @@
                                                 })))
         ]
 
-    (println (reduce + (map #(.size (second %)) index))
-             "tiles to match against")
+    (log/info (reduce + (map #(.size (second %)) index)) "tiles to match against")
     
     (as-> shapes shapes
       (geoio/update-features shapes :estimate-party-walls estimate-party-walls feature-index)
