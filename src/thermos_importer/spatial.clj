@@ -133,7 +133,7 @@
         from-wkt (fn [wkt] (CRS/findMathTransform input-crs (CRS/parseWKT wkt) true))
         from-epsg (fn [epsg]
                     (CRS/findMathTransform input-crs
-                                           (CRS/decode (str "EPSG:" wpsg) true)
+                                           (CRS/decode (str "EPSG:" epsg) true)
                                            true))
         ]
 
