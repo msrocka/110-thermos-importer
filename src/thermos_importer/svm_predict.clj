@@ -48,7 +48,7 @@
       (+ offset (* factor x)))))
 
 (defn predictor
-  "Create a predictor function from some json from R's libsvm wrpaper
+  "Create a predictor function from some json from R's libsvm wrapper.
   The predictor function returns two values in a double array.
   The first is the value of the SVM output.
   The second is the value of the scaled input dimension having largest absolute value.
@@ -108,42 +108,30 @@
   (with-open [r (io/reader file)]
     (predictor (json/read r :key-fn keyword))))
 
+;; TODO this should be a test
+(comment
+  (def some-json (json/read-str (slurp "/home/hinton/tmp/svm.json") :key-fn keyword))
+  (def p (predictor some-json))
 
-;; (def some-json (json/read-str (slurp "/home/hinton/temp/svm.json") :key-fn keyword))
-;; (def p (predictor some-json))
-
-;; (defn csv-data->maps [csv-data]
-;;   (map zipmap
-;;        (->> (first csv-data) ;; First row is the header
-;;             (map keyword) ;; Drop if you want string keys instead
-;;             repeat)
-;;        (rest csv-data)))
-;; (def test-data
-;;   (with-open [reader (io/reader "/home/hinton/temp/svm.csv")]
-;;     (doall (csv-data->maps (csv/read-csv reader)))))
+  (defn csv-data->maps [csv-data]
+    (map zipmap
+         (->> (first csv-data) ;; First row is the header
+              (map keyword) ;; Drop if you want string keys instead
+              repeat)
+         (rest csv-data)))
+  
+  (def test-data
+    (with-open [reader (io/reader "/home/hinton/tmp/svm.csv")]
+      (doall (csv-data->maps (csv/read-csv reader)))))
 
 
-;; (def delta
-;;   (for [t test-data]
-;;    {:mine (p (into {}
-;;                    (for [k (keys (:svs some-json))]
-;;                      [k (Double/parseDouble (t k))])))
-    
-;;     :theirs (Double/parseDouble (:predicted t))}
-;;    ))
+  (def delta
+    (for [t test-data]
+      {:mine (first (p (into {}
+                       (for [k (keys (:svs some-json))]
+                         [k (Double/parseDouble (t k))]))))
+       
+       :theirs (Double/parseDouble (:predicted t))}
+      ))
 
-;; (def simple {:svs {:x [-1.4863011 -1.1560120 -0.8257228 -0.4954337 0.4954337 0.8257228 1.1560120 1.4863011 ]}
-;;              :scaling
-;;              {:x.scale {:scaled:center {:x 5.5}
-;;                         :scaled:scale {:x 3.02765}
-;;                         }
-;;               :y.scale {:scaled:center 15.5 :scaled:scale 3.02765}}
-;;              :offset -7.394432e-10
-;;              :alpha [-1.0000000 -0.2062952 -0.4106167 -0.1191324  0.1191324  0.4106167  0.2062952 1.0000000]
-;;              :kpar {:sigma 4.81023102310231}
-;;              })
-
-;; (def p (predictor
-;;         simple
-;;         ))
-
+  )
