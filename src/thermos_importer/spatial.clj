@@ -108,6 +108,12 @@
        (feature-overlaps index) ;; find things which could intersect
        (filter (partial features-intersect? feature)))) ;; restrict to things which do
 
+(defn utm-zone-epsg-code [lon lat]
+  (let [utm-band (+ 1 (mod (int (Math/floor (/ (+ lon 180.0) 6.0))) 60))]
+    (if (>= lat 0)
+      (format "326%02d" utm-band)
+      (format "327%02d" utm-band))))
+
 (defn sensible-projection
   "Create a projection of a certain type for the given features in their input CRS"
   [type input-crs features]
@@ -121,14 +127,23 @@
                 (Envelope2D.)
                 features)
 
-        wkt
-        (case type
-          :lambert-conformal-conic
-          (let [parallel-1 (.getMinimum bounding-box 1)
-                parallel-2 (.getMaximum bounding-box 1)
-                latitude-origin (.getMedian bounding-box 1)
-                longitude-origin (.getMedian bounding-box 0)]
-            (format "PROJCS[\"Lambert_Conformal_Conic\",
+        lat-centre (.getMedian bounding-box 1)
+        lon-centre (.getMedian bounding-box 0)
+
+        from-wkt (fn [wkt] (CRS/findMathTransform input-crs (CRS/parseWKT wkt) true))
+        from-epsg (fn [epsg]
+                    (CRS/findMathTransform input-crs
+                                           (CRS/decode (str "EPSG:" wpsg) true)
+                                           true))
+        ]
+
+    (case type
+      :lambert-conformal-conic
+      (let [parallel-1 (.getMinimum bounding-box 1)
+            parallel-2 (.getMaximum bounding-box 1)]
+        
+        (from-wkt
+         (format "PROJCS[\"Lambert_Conformal_Conic\",
     GEOGCS[\"GCS_European_1950\",
         DATUM[\"European_Datum_1950\",
             SPHEROID[\"International_1924\",6378388,297]],
@@ -142,16 +157,15 @@
     PARAMETER[\"Standard_Parallel_2\",%f],
     PARAMETER[\"latitude_of_center\",%f],
     UNIT[\"Meter\",1]]"
-                    longitude-origin
-                    parallel-1
-                    parallel-2
-                    latitude-origin
-                    ))
-          :azimuthal-equidistant
-          
-          (let [latitude-origin (.getMedian bounding-box 1)
-                longitude-origin (.getMedian bounding-box 0)]
-            (format "PROJCS[\"unnamed\",
+                 lon-centre
+                 parallel-1
+                 parallel-2
+                 lat-centre
+                 )))
+      :azimuthal-equidistant
+      
+      (from-wkt
+       (format "PROJCS[\"unnamed\",
     GEOGCS[\"WGS 84\",
         DATUM[\"unknown\",
             SPHEROID[\"WGS84\",6378137,298.257223563]],
@@ -163,36 +177,39 @@
     PARAMETER[\"false_easting\",0],
     PARAMETER[\"false_northing\",0],
     UNIT[\"Meter\", 1.0]]"
-                    latitude-origin
-                    longitude-origin
-                    ))
+               lat-centre
+               lon-centre))
 
-          :oblique-mercator
-          (let [latitude-origin (.getMedian bounding-box 1)
-                longitude-origin (.getMedian bounding-box 0)]
-            (format
-             "PROJCS[\"OBLIQUE MERCATOR\",
-        GEOGCS[\"WGS 84\", 
-               DATUM[\"WGS_1984\", SPHEROID[\"WGS 84\",6378137,298.257223563]],
-               PRIMEM[\"Greenwich\",0],
-               UNIT[\"degree\",0.01745329251994328]],
-        PROJECTION[\"Hotine_Oblique_Mercator\"],
-        PARAMETER[\"latitude_of_center\", %f],
-        PARAMETER[\"longitude_of_center\", %f],
-        PARAMETER[\"azimuth\",89.999999],
-        PARAMETER[\"rectified_grid_angle\",89.999999],
-        PARAMETER[\"scale_factor\",1],
-        PARAMETER[\"false_easting\",0],
-        PARAMETER[\"false_northing\",0],
-        UNIT[\"Meter\",1]]"
-             
-                    latitude-origin
-                    longitude-origin
-                    ))
-          
-          (throw (ex-info "Unknown type of projection"
-                          {:type type})))]
-    (CRS/findMathTransform input-crs (CRS/parseWKT wkt) true)))
+      ;; :oblique-mercator
+      ;; (let [latitude-origin (.getMedian bounding-box 1)
+      ;;         longitude-origin (.getMedian bounding-box 0)]
+      ;;     (format
+      ;;      "PROJCS[\"OBLIQUE MERCATOR\",
+      ;; GEOGCS[\"WGS 84\", 
+      ;;        DATUM[\"WGS_1984\", SPHEROID[\"WGS 84\",6378137,298.257223563]],
+      ;;        PRIMEM[\"Greenwich\",0],
+      ;;        UNIT[\"degree\",0.01745329251994328]],
+      ;; PROJECTION[\"Hotine_Oblique_Mercator\"],
+      ;; PARAMETER[\"latitude_of_center\", %f],
+      ;; PARAMETER[\"longitude_of_center\", %f],
+      ;; PARAMETER[\"azimuth\",89.999999],
+      ;; PARAMETER[\"rectified_grid_angle\",89.999999],
+      ;; PARAMETER[\"scale_factor\",1],
+      ;; PARAMETER[\"false_easting\",0],
+      ;; PARAMETER[\"false_northing\",0],
+      ;; UNIT[\"Meter\",1]]"
+      
+      ;;             latitude-origin
+      ;;             longitude-origin
+      ;;             ))
+
+
+      :utm-zone
+      (from-epsg (utm-zone-epsg-code lon-centre lat-center))
+      
+      (throw (ex-info "Unknown type of projection"
+                      {:type type})))
+    ))
 
 (defn reproject-1 [feature ^MathTransform transform]
   (let [^Geometry g (::geoio/geometry feature)

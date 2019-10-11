@@ -300,7 +300,7 @@
         
         feature-index (util/index-features (::geoio/features shapes))
         sensible-transform (spatial/sensible-projection
-                            :oblique-mercator ;; maybe this is better?
+                            :utm-zone
                             shapes-crs (::geoio/geatures shapes))
 
         shapes-box  (geoio/bounding-box shapes)
