@@ -300,7 +300,7 @@
         
         feature-index (util/index-features (::geoio/features shapes))
         sensible-transform (spatial/sensible-projection
-                            :azimuthal-equidistant ;; not sure
+                            :oblique-mercator ;; maybe this is better?
                             shapes-crs (::geoio/geatures shapes))
 
         shapes-box  (geoio/bounding-box shapes)

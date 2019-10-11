@@ -166,6 +166,29 @@
                     latitude-origin
                     longitude-origin
                     ))
+
+          :oblique-mercator
+          (let [latitude-origin (.getMedian bounding-box 1)
+                longitude-origin (.getMedian bounding-box 0)]
+            (format
+             "PROJCS[\"OBLIQUE MERCATOR\",
+        GEOGCS[\"WGS 84\", 
+               DATUM[\"WGS_1984\", SPHEROID[\"WGS 84\",6378137,298.257223563]],
+               PRIMEM[\"Greenwich\",0],
+               UNIT[\"degree\",0.01745329251994328]],
+        PROJECTION[\"Hotine_Oblique_Mercator\"],
+        PARAMETER[\"latitude_of_center\", %f],
+        PARAMETER[\"longitude_of_center\", %f],
+        PARAMETER[\"azimuth\",89.999999],
+        PARAMETER[\"rectified_grid_angle\",89.999999],
+        PARAMETER[\"scale_factor\",1],
+        PARAMETER[\"false_easting\",0],
+        PARAMETER[\"false_northing\",0],
+        UNIT[\"Meter\",1]]"
+             
+                    latitude-origin
+                    longitude-origin
+                    ))
           
           (throw (ex-info "Unknown type of projection"
                           {:type type})))]
