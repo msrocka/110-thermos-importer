@@ -205,7 +205,7 @@
 
 
       :utm-zone
-      (from-epsg (utm-zone-epsg-code lon-centre lat-center))
+      (from-epsg (utm-zone-epsg-code lon-centre lat-centre))
       
       (throw (ex-info "Unknown type of projection"
                       {:type type})))
