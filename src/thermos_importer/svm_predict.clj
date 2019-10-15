@@ -61,7 +61,7 @@
         map->sv #(double-array (for [k key-order]
                                  (let [v (get % k 0)]
                                    (if (boolean? v)
-                                     (if v 1 0)
+                                     (if v 1.0 0.0)
                                      v))))
         
         svs ^"[[D" (into-array (map map->sv svs))

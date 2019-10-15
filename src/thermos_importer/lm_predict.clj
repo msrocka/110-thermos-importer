@@ -36,7 +36,11 @@
           (areduce
            key-order ix acc constant
            (+ acc (* (aget muls ix)
-                     (get val (aget key-order ix)))))))
+                     (let [x (get val (aget key-order ix))]
+                       (if (boolean x)
+                         (if x 1.0 0.0)
+                         (double x))))
+              ))))
       {:predictors key-order})))
 
 
