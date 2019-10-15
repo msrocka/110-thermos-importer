@@ -1,5 +1,6 @@
 (ns thermos-importer.lm-predict
-  "Functions to run linear model predictors")
+  "Functions to run linear model predictors"
+  (:require [clojure.test :as test]))
 
 (defn predictor
   "Create a predictor function from some json from josh's email
@@ -10,9 +11,20 @@
     [:predictor mul]* }
 
   Therefore we cannot have a predictor called intercept."
+  {:test #(let [a (predictor {:intercept 100.0})
+                b (predictor {:x 1})
+                c (predictor {:x 3 :y -9})
+                d (predictor {:x 1 :y -1 :intercept 1000})]
+            (test/is (= (a {}) 100.0))
+            (test/is (= (b {:x 1}) 1.0))
+            (test/is (= (b {:x 2}) 2.0))
+            (test/is (= (c {:x 1 :y 0}) 3.0))
+            (test/is (= (c {:x 1 :y 1}) -6.0))
+            (test/is (= (d {:x -1 :y 1}) 998.0)))}
+
   [json]
 
-  (let [constant ^double (or (double (:intercept json)) 0.0)
+  (let [constant ^double (double (:intercept json 0.0))
         json (dissoc json :intercept)
         key-order (into-array (sort (keys json)))
         muls (double-array (map (comp double json) key-order))
@@ -23,8 +35,8 @@
         (when (has-required-keys val)
           (areduce
            key-order ix acc constant
-           (+ constant (* (aget muls ix)
-                          (get val (aget key-order ix)))))))
+           (+ acc (* (aget muls ix)
+                     (get val (aget key-order ix)))))))
       {:predictors key-order})))
 
 
