@@ -37,10 +37,13 @@
            key-order ix acc constant
            (+ acc (* (aget muls ix)
                      (let [x (get val (aget key-order ix))]
-                       (if (boolean x)
-                         (if x 1.0 0.0)
-                         (double x))))
-              ))))
+                       (cond
+                         (number? x)
+                         (double x)
+
+                         x 1.0
+                         true 0.0))))
+           )))
       {:predictors key-order})))
 
 
