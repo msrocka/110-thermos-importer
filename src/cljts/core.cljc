@@ -143,8 +143,8 @@
     +
     (map
      (fn [^Coordinate a ^Coordinate b]
-       (let [xa (.getX a) xb (.getX b)
-             ya (.getY a) yb (.getY b)]
+       (let [xa (.-x a) xb (.-x b)
+             ya (.-y a) yb (.-y b)]
          (* (- xb xa) (+ yb ya))))
      coordinates (rest coordinates)))))
 
@@ -317,17 +317,35 @@
 
 (let [d2r (/ Math/PI 180.0)]
   (defn- to-radians [^double deg]
-    (* deg d2r)))
+    (* deg d2r))
+  (defn to-degrees [^double rad]
+    (/ rad d2r)))
+
 
 (let [a 6378137.0                       ; These are the WGS84 parameters
       b 6356752.314245
-      f (/ 1.0 298.257223563)]
+      f (/ 1.0 298.257223563)
+
+      lonlat (fn [point]
+                (cond
+                      (instance? Point point)
+                      (let [c (.getCoordinate point)]
+                        [(.-x c) (.-y c)])
+
+                      (instance? Coordinate point)
+                      [(.-x point) (.-y point)]
+
+                      (vector? point)
+                      point))
+
+      lonlat-rads (fn [point] (let [[a b] (lonlat point)]
+                                [(to-radians a) (to-radians b)]))
+      ]
   
   (defn geodesic-distance [p1 p2]
-    (let [φ1 (to-radians (.-x p1))
-          φ2 (to-radians (.-x p2))
-          λ1 (to-radians (.-y p1))
-          λ2 (to-radians (.-y p2))
+    ;; x is lon, y is lat
+    (let [[λ1 φ1] (lonlat-rads p1)
+          [λ2 φ2] (lonlat-rads p2)
 
           L (- λ2 λ1)
 
@@ -398,7 +416,82 @@
 
                       s (* b A (- σ Δσ))]
                   s)
-                (recur λ (inc i))))))))))
+                (recur λ (inc i)))))))))
+
+  (defn geodesic-translation [point distance bearing]
+    ;; x is lon y is lat
+    (let [[λ1 φ1] (lonlat-rads point)
+          α1 (to-radians bearing)
+          s  distance
+
+          sinα1 (Math/sin α1)
+          cosα1 (Math/cos α1)
+          tanU1 (* (- 1 f) (Math/tan φ1))
+          cosU1 (/ 1 (Math/sqrt (+ 1 (* tanU1 tanU1))))
+          sinU1 (* tanU1 cosU1)
+          σ1    (Math/atan2 tanU1 cosα1)
+          sinα  (* cosU1 sinα1)
+
+          cosSqα (- 1 (* sinα sinα))
+          uSq    (* cosSqα (/ (- (* a a) (* b b))
+                              (* b b)))
+
+          A      (+ 1 (* (/ uSq 16384)
+                         (+ 4096 (* uSq (+ -768 (* uSq (- 320 (* 175 uSq))))))))
+          B      (* (/ uSq 1024)
+                    (+ 256 (* uSq (+ -128 (* uSq (- 74 (* 47 uSq)))))))
+          ]
+      (loop [σ (/ s (* b A))
+             i 0]
+        (let [cos2σₘ (Math/cos (+ σ (* 2 σ1)))
+              sinσ   (Math/sin σ)
+              cosσ   (Math/cos σ)
+              Δσ     (* B sinσ
+                        (+ cos2σₘ
+                           (* (/ B 4)
+                              (-
+                               (* cosσ (+ -1 (* 2 cos2σₘ cos2σₘ)))
+                               (* (/ B 6)
+                                  cos2σₘ
+                                  (+ -3 (* 4 sinσ sinσ))
+                                  (+ -3 (* 4 cos2σₘ cos2σₘ)))))))
+              σ1     (+ Δσ (/ s (* b A)))
+              error  (Math/abs (- σ1 σ))
+              ]
+          (if (and (> error 1e-12)
+                   (< i 100))
+            (recur σ1 (inc i))
+
+            (let [x  (- (* sinU1 sinσ)
+                        (* cosU1 cosσ cosα1))
+
+                  φ2 (Math/atan2
+                      (+ (* sinU1 cosσ)
+                         (* cosU1 sinσ cosα1))
+                      (* (- 1 f)
+                         (Math/sqrt (+ (* sinα sinα)
+                                       (* x x)))))
+
+                  λ  (Math/atan2
+                      (* sinσ sinα1)
+                      (- (* cosU1 cosσ)
+                         (* sinU1 sinσ cosα1)))
+                  
+                  C  (* (/ f 16)
+                        cosSqα
+                        (+ 4 (* f (- 4 (* 3 cosSqα)))))
+
+                  L  (- λ
+                        (* (- 1 C)
+                           f sinα
+                           (+ σ
+                              (* C sinσ
+                                 (+ cos2σₘ (* C cosσ
+                                              (+ -1 (* 2 cos2σₘ cos2σₘ))))))))
+
+                  λ2 (+ λ1 L)
+                  α2 (Math/atan2 sinα (- x))]
+              (create-point (to-degrees λ2) (to-degrees φ2)))))))))
 
 (defn geodesic-length [line-string]
   (reduce +
