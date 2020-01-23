@@ -260,7 +260,7 @@
                  (dissoc feature ::geoio/geometry))
       (throw e))))
 
-(defn- derive-more-fields [feature]
+(defn derive-more-fields [feature]
   (cond-> feature
     (::shared-perimeter feature)
     (derive-2d-fields)
