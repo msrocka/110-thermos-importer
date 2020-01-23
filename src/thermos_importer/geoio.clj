@@ -5,7 +5,8 @@
             [thermos-importer.util :as util]
             [thermos-importer.util :refer [has-extension file-extension]]
             [clojure.tools.logging :as log]
-            [cljts.core :as jts])
+            [cljts.core :as jts]
+            [clojure.data.json :as json])
   (:import  [java.security MessageDigest]
             [java.util Base64 Base64$Encoder]
             [org.locationtech.jts.geom Geometry Coordinate]
@@ -137,7 +138,35 @@
     
     {::features features ::crs crs-id}))
 
-(defn- read-from-geojson [filename & {:keys [force-crs key-transform]}]
+(defn read-from-geojson-2 [reader & {:keys [force-crs key-transform]
+                                     :or {key-transform keyword}}]
+  (let [obj (json/read reader)
+        fix-keys (fn [p]
+                   (into {} (for [[k v] p] [(key-transform k) v])))]
+    {::crs (get-in obj ["crs" "properties" "name"] "EPSG:4326")
+     
+     ::features
+     (case (get obj "type")
+       "FeatureCollection"
+       
+       (vec
+        (for [feature (get obj "features")]
+          (update-geometry
+           (fix-keys (get feature "properties"))
+           (jts/map->geom (get feature "geometry")))))
+       
+       "Feature"
+       [(update-geometry
+         (fix-keys (get obj "properties"))
+         (jts/map->geom (get obj "geometry")))]
+
+       (update-geometry
+        {}
+        (jts/map->geom obj)))}))
+
+
+(defn read-from-geojson [filename & {:keys [force-crs key-transform]
+                                     :or {key-transform keyword}}]
   (let [io (FeatureJSON.)
         crs (or (try (.readCRS io filename)
                      (catch Exception e))

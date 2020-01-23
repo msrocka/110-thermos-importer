@@ -47,6 +47,50 @@
 (defn- linestring->vec [^LineString ls]
   (vec (map coord->vec (.getCoordinates ls))))
 
+(declare create-point create-line-string create-polygon
+         create-multi-line-string create-multi-point create-multi-polygon
+         create-geometry-collection)
+
+(defn map->geom
+  "Convert a geojson geometry map into a jts / jsts geometry directly"
+  [m]
+
+  (let [coordinates (or (:coordinates m)
+                        (get m "coordinates"))
+        type (or (:type m)
+                 (get m "type"))
+        ]
+    (case type
+      "Point"
+      (create-point coordinates)
+      "LineString"
+      (create-line-string coordinates)
+      "Polygon"
+      (create-polygon (first coordinates)
+                      (rest coordinates))
+      "MultiPoint"
+      (create-multi-point
+       (for [cs coordinates]
+         (create-point cs)))
+      
+      "MultiLineString"
+      (create-multi-line-string
+       (for [cs coordinates]
+         (create-line-string cs)))
+      
+      "MultiPolygon"
+      (create-multi-polygon
+       (for [cs coordinates]
+         (create-polygon (first cs) (rest cs))))
+      
+      "GeometryCollection"
+      (create-geometry-collection
+       (for [g (or (:geometries m) (get m "geometries"))]
+         (map->geom g)))
+
+      (throw (ex-info "I'm confused" {:geometry-type type}))
+      )))
+
 (defn geom->map
   "Convert a jts / jsts geometry into a clojure map that looks like the
   geometry part of a geojson."
@@ -177,7 +221,7 @@
          LinearRing
          (map create-linear-ring inner)))))))
 
-(defn create-multipolygon
+(defn create-multi-polygon
   [polygons]
 
   (.createMultiPolygon
@@ -195,6 +239,18 @@
   (.createMultiLineString
    *geometry-factory*
    (into-array LineString line-strings)))
+
+(defn create-multi-point
+  [points]
+  (.createMultiPoint
+   *geometry-factory*
+   (into-array Point points)))
+
+(defn create-geometry-collection
+  [geoms]
+  (.createGeometryCollection
+   *geometry-factory*
+   (into-array Geometry geoms)))
 
 (defn intersects? [^Geometry a ^Geometry b]
   (and a b (.intersects a b)))
