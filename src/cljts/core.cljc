@@ -316,6 +316,8 @@
          (.update md5 (.toFixed (.-y c) 8)))
        (.substring (base64/encodeByteArray (.digest md5)) 0 16))))
 
+
+
 (defn cut-line-string
   "Given a linestring geometry and a point geometry,
   return one or two linestrings which are cut as close as possible to
@@ -555,4 +557,17 @@
                (coordinates line-string)
                (rest (coordinates line-string)))))
 
-  
+(defn distance-between
+  "Given two geometries, find how far apart they are at their closest points
+  If :geodesic true, then assume WGS84 lat/lon coordinates and give result in meters."
+  [g1 g2 & {:keys [geodesic]}]
+  (let [op (#?(:cljs
+               jsts/operation.distance.DistanceOp.
+               :clj
+               DistanceOp.)
+            g1 g2)]
+    (if geodesic
+      (let [[c1 c2] (.nearestPoints op)]
+        (geodesic-distance c1 c2))
+      
+      (.distance op))))
