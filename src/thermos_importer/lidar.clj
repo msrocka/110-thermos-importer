@@ -190,10 +190,10 @@
         
         (assoc feature ::shared-perimeter 0)))
     (catch Exception e
-      (printf
-       "Error computing party walls for %s: %s\n"
-       (dissoc feature ::geoio/geometry)
-       (.getMessage e))
+      (log/error e
+                 "Error computing party walls for %s: %s\n"
+                 (dissoc feature ::geoio/geometry)
+                 (.getMessage e))
       (assoc feature ::shared-perimeter 0))))
 
 (defn- derive-2d-fields [feature]
@@ -344,8 +344,8 @@
                           ground-level-threshold)
                          (catch Exception e
                            (.printStackTrace e)
-                           (printf
-                            "Error adding lidar data to %s: %s\n"
+                           (log/error
+                            e "Error adding lidar data to %s: %s\n"
                             (dissoc feature ::geoio/geometry)
                             (.getMessage e))
                            {}))
