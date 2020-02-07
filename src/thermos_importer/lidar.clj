@@ -217,6 +217,7 @@
            ::shared-perimeter-m shared-perimeter-m
            ::perimeter-per-footprint perimeter-per-footprint
            ::floor-area footprint
+           ::storeys 1
            )))
 
 (defn- derive-3d-fields [feature]
@@ -241,7 +242,9 @@
           
           tot-surface-per-volume (/ total-surface-area volume)
 
-          floor-area (or floor-area (* footprint (/ height *storey-height*)))
+          storeys (Math/ceil (/ height *storey-height*))
+          
+          floor-area (* footprint storeys)
           ]
       (assoc feature
              ::wall-area wall-area
@@ -251,6 +254,7 @@
              ::total-surface-area total-surface-area
              ::volume volume
              ::floor-area floor-area
+             ::storeys storeys
              ::ext-surface-proportion ext-surface-proportion
              ::ext-surface-per-volume ext-surface-per-volume
              ::tot-surface-per-volume tot-surface-per-volume))
@@ -281,6 +285,13 @@
             shapes-envelope (JTS/transform shapes-envelope transform)
             shapes-envelope (util/envelope->rect shapes-envelope)]
         (.intersects raster-mbr shapes-envelope)))))
+
+(defn count-corners [geom]
+  (case (.getGeometryType geom)
+    ("Polygon" "MultiPolygon")
+    (let [geom (org.locationtech.jts.simplify.TopologyPreservingSimplifier/simplify geom 7.5)]
+      (dec (.getNumPoints geom)))
+    0))
 
 (defn add-lidar-to-shapes
   "Given a raster index from `rasters->index` and a `shapes`, which is a
@@ -316,6 +327,7 @@
                                                {::num-samples 0
                                                 ::footprint (.getArea shape)
                                                 ::perimeter (.getLength shape)
+                                                ::corners   (count-corners shape)
                                                 })))
         ]
 
