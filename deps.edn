@@ -1,9 +1,11 @@
 {:paths ["src" "resources"]
  :mvn/repos
- {"boundless" {:url "http://repo.boundlessgeo.com/main"}}
+ {"boundless" {:url "http://repo.boundlessgeo.com/main"}
+  "central" {:url "https://repo1.maven.org/maven2/"}}
  :deps
  {org.clojure/clojure {:mvn/version"1.9.0"}
   org.clojure/tools.cli {:mvn/version"0.3.5"}
+  org.clojure/tools.logging {:mvn/version "0.5.0"}
 
   digest {:mvn/version"1.4.6"}
   
@@ -23,6 +25,5 @@
   
   better-cond {:mvn/version"1.0.1"}
 
-  cljsjs/jsts {:mvn/version "1.6.0-0"}
-  }}
+  cljsjs/jsts {:mvn/version "1.6.0-0"}}}
 

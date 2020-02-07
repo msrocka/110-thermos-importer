@@ -1,19 +1,17 @@
 (def project 'thermos-importer)
 (def version "0.1.0-SNAPSHOT")
 
-(def geo-repos
-  [;; ["jts" {:url "https://repo.locationtech.org/content/groups/releases"}]
-   ;; ["jts-snapshots" {:url "https://repo.locationtech.org/content/repositories/jts-snapshots"}]
-   ;; ["geotools" {:url "http://download.osgeo.org/webdav/geotools"}]
-   ["boundless" {:url "http://repo.boundlessgeo.com/main"}]
-   ])
+(def geo-repos [["boundless" {:url "http://repo.boundlessgeo.com/main"}]
+                ["central" {:url "https://repo1.maven.org/maven2/"}]])
 
 (set-env! :resource-paths #{"resources" "src"}
           :source-paths   #{"test"}
           :repositories #(concat % geo-repos)
-          :dependencies   '[[org.clojure/clojure "1.9.0"]
+          :dependencies   '[[seancorfield/boot-tools-deps "0.4.7" :scope "test"]
+                            [adzerk/boot-test "RELEASE" :scope "test"]
+                            [org.clojure/clojure "1.9.0"]
                             [org.clojure/tools.cli "0.3.5"]
-
+                            [org.clojure/tools.logging "0.5.0"]
                             [digest "1.4.6"]
                             
                             [org.geotools/gt-data "20.0"]
@@ -32,7 +30,9 @@
                             
                             [better-cond "1.0.1"]
 
-                            [adzerk/boot-test "RELEASE" :scope "test"]])
+                            ])
+
+(require '[boot-tools-deps.core :refer [deps]])
 
 (task-options!
  aot {:namespace   #{'thermos-importer.core}}
@@ -57,6 +57,8 @@
   "Build the project locally as a JAR."
   [d dir PATH #{str} "the set of directories to write to (target)."]
   (let [dir (if (seq dir) dir #{"target"})]
-    (comp (aot) (pom) (uber) (jar) (target :dir dir))))
+    (comp ;; (deps :overwrite-boot-deps true)
+
+          (aot) (pom) (uber) (jar) (target :dir dir))))
 
 (require '[adzerk.boot-test :refer [test]])
