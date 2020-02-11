@@ -265,14 +265,12 @@
         
         storeys (or (::storeys feature)
                     ;; should we round up here?
-                    (and height (Math/ceil (/ height *storey-height*)))
-                    1)
+                    (and height (Math/ceil (/ height *storey-height*))))
 
         height     (or height
                        ;; this might be bogus - if we know the storeys and not height
                        ;; we derive a height
-                       (and (::storeys feature)
-                            (* storeys *storey-height*)))
+                       (and storeys (* storeys *storey-height*)))
         
         floor-area (or (::floor-area feature)
                        (* (::footprint feature 0) storeys))
