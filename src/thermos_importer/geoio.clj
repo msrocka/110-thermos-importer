@@ -36,12 +36,12 @@
                 (let [now (System/currentTimeMillis)
                       delta (- now start)]
                   (when (> delta 5000)
-                    (printf "\n%s [%s%%, %.1fm]"
-                            tag
-                            (int (/ (* 100 n) total))
-                            (float (/ (* (- total n)
-                                         (/ delta n))
-                                      60000)))
+                    (log/info (format "\n%s [%s%%, %.1fm]"
+                                      tag
+                                      (int (/ (* 100 n) total))
+                                      (float (/ (* (- total n)
+                                                   (/ delta n))
+                                                60000))))
                     (when (.isInterrupted (Thread/currentThread))
                       (throw (InterruptedException.)))
                     (flush))))))))
