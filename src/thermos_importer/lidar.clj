@@ -215,10 +215,7 @@
         ]
     (assoc feature
            ::shared-perimeter-m shared-perimeter-m
-           ::perimeter-per-footprint perimeter-per-footprint
-           ::floor-area footprint
-           ::storeys 1
-           )))
+           ::perimeter-per-footprint perimeter-per-footprint)))
 
 (defn- derive-3d-fields [feature]
   (try
@@ -241,10 +238,6 @@
           ext-surface-per-volume (/ external-surface-area volume)
           
           tot-surface-per-volume (/ total-surface-area volume)
-
-          storeys (Math/ceil (/ height *storey-height*))
-          
-          floor-area (* footprint storeys)
           ]
       (assoc feature
              ::wall-area wall-area
@@ -253,8 +246,6 @@
              ::external-surface-area external-surface-area
              ::total-surface-area total-surface-area
              ::volume volume
-             ::floor-area floor-area
-             ::storeys storeys
              ::ext-surface-proportion ext-surface-proportion
              ::ext-surface-per-volume ext-surface-per-volume
              ::tot-surface-per-volume tot-surface-per-volume))
@@ -265,14 +256,35 @@
       (throw e))))
 
 (defn derive-more-fields [feature]
-  (cond-> feature
-    (::shared-perimeter feature)
-    (derive-2d-fields)
+  ;; take or compute storeys ceil(height / storey height)
+  ;; take or compute floor area (storeys * footprint)
+  ;; derive other fields
+  ;; if we have both storeys and floor area, wargarbl?
 
-    (and (::shared-perimeter feature)
-         (::height feature)
-         (pos? (::height feature)))
-    (derive-3d-fields)))
+  (let [height  (::height feature)
+        
+        storeys (or (::storeys feature)
+                    ;; should we round up here?
+                    (and height (Math/ceil (/ height *storey-height*))))
+
+        height     (or height
+                       ;; this might be bogus - if we know the storeys and not height
+                       ;; we derive a height
+                       (and storeys (* storeys *storey-height*)))
+        
+        floor-area (or (::floor-area feature)
+                       (* (::footprint feature 0) storeys))
+
+        shared-perimeter (::shared-perimeter feature)
+        ]
+
+    (cond-> feature
+      storeys    (assoc ::storeys storeys)
+      height     (assoc ::height height)
+      floor-area (assoc ::floor-area floor-area)
+      shared-perimeter (derive-2d-fields)
+      (and shared-perimeter height (pos? height))
+      (derive-3d-fields))))
 
 (defn envelope-covers-tree [raster-crs raster-tree
                             shapes-crs ^org.locationtech.jts.geom.Envelope shapes-envelope]
