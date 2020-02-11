@@ -273,7 +273,7 @@
                        (and storeys (* storeys *storey-height*)))
         
         floor-area (or (::floor-area feature)
-                       (* (::footprint feature 0) storeys))
+                       (* (::footprint feature 0) (or storeys 1)))
 
         shared-perimeter (::shared-perimeter feature)
         ]
