@@ -139,9 +139,15 @@
         x-max (.getMaxX envelope)
         y-min (.getMinY envelope)
         y-max (.getMaxY envelope)
+
+
+        extent (max (Math/abs (- x-max x-min)) (Math/abs (- y-max y-min)))
+        
+        grid-step (max 1.0 (Math/round (/ extent 50.0)))
         ]
-    (for [x (range x-min x-max 1.0)
-          y (range y-min y-max 1.0)
+
+    (for [x (range x-min x-max grid-step)
+          y (range y-min y-max grid-step)
           :when (.covers shape
                          (.createPoint
                           (.getFactory shape)
