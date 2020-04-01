@@ -49,7 +49,8 @@
 
 (declare create-point create-line-string create-polygon
          create-multi-line-string create-multi-point create-multi-polygon
-         create-geometry-collection)
+         create-geometry-collection
+         coordinate-seq)
 
 (defn map->geom
   "Convert a geojson geometry map into a jts / jsts geometry directly"
@@ -232,7 +233,7 @@
   [coordinates]
   (.createLineString
    *geometry-factory*
-   (into-array Coordinate coordinates)))
+   (into-array Coordinate (coordinate-seq coordinates))))
 
 (defn create-multi-line-string
   [line-strings]
