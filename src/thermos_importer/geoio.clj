@@ -138,35 +138,53 @@
     
     {::features features ::crs crs-id}))
 
-(defn read-from-geojson-2 [reader & {:keys [force-crs key-transform]
+(defn read-from-geojson-2 [reader & {:keys [force-crs key-transform homogenise-keys]
                                      :or {key-transform keyword}}]
-  (let [obj (json/read reader)
+  (let [do-homogenise-keys
+        (fn [features]
+          (let [null-properties (into {} (for [k (set (mapcat keys features))] [k nil]))]
+            (for [f features]
+              (merge null-properties f))))
+        
+        obj (json/read reader)
         fix-keys (fn [p]
-                   (into {} (for [[k v] p] [(key-transform k) v])))]
-    {::crs (get-in obj ["crs" "properties" "name"] "EPSG:4326")
-     
+                   (into {} (for [[k v] p] [(key-transform k) v])))
+        crs (get-in obj ["crs" "properties" "name"] "EPSG:4326")
+        ]
+    {::crs (or force-crs crs)
      ::features
-     (case (get obj "type")
-       "FeatureCollection"
-       
-       (vec
-        (for [feature (get obj "features")]
-          (update-geometry
-           (fix-keys (get feature "properties"))
-           (jts/map->geom (get feature "geometry")))))
-       
-       "Feature"
-       [(update-geometry
-         (fix-keys (get obj "properties"))
-         (jts/map->geom (get obj "geometry")))]
+     (cond->
+         (case (get obj "type")
+           "FeatureCollection"
+           
+           (vec
+            (for [feature (get obj "features")]
+              (update-geometry
+               (fix-keys (get feature "properties"))
+               (jts/map->geom (get feature "geometry")))))
+           
+           "Feature"
+           [(update-geometry
+             (fix-keys (get obj "properties"))
+             (jts/map->geom (get obj "geometry")))]
 
-       (update-geometry
-        {}
-        (jts/map->geom obj)))}))
+           [(update-geometry
+             {}
+             (jts/map->geom obj))])
+       
+       homogenise-keys
+       (do-homogenise-keys)
+
+       force-crs
+       (->> (map (reprojector crs force-crs)))
+       )}))
+
 
 
 (defn read-from-geojson [filename & {:keys [force-crs key-transform]
                                      :or {key-transform keyword}}]
+  
+  
   (let [io (FeatureJSON.)
         crs (or (try (.readCRS io filename)
                      (catch Exception e))
@@ -218,7 +236,11 @@
 
       (or (has-extension filename "json")
           (has-extension filename "geojson"))
-      (read-from-geojson filename :force-crs force-crs :key-transform key-transform)
+      (with-open [r (io/reader filename)]
+        (read-from-geojson-2 r
+                             :force-crs force-crs
+                             :key-transform key-transform
+                             :homogenise-keys true))
 
       :otherwise
       (throw (Exception. (str "Unable to read features from " filename)))
