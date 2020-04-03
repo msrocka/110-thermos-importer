@@ -556,11 +556,7 @@
 
 (defn geodesic-length [line-string]
   (reduce +
-          (map (fn [a b] (let [d (geodesic-distance a b)]
-                           (when (nan? d)
-                             (println "Bad dist between" a b)
-                             )
-                           d))
+          (map geodesic-distance
                (coordinates line-string)
                (rest (coordinates line-string)))))
 
