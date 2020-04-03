@@ -403,79 +403,81 @@
   
   (defn geodesic-distance [p1 p2]
     ;; x is lon, y is lat
-    (let [[λ1 φ1] (lonlat-rads p1)
-          [λ2 φ2] (lonlat-rads p2)
+    (if (= p1 p2)
+      0.0
+      (let [[λ1 φ1] (lonlat-rads p1)
+            [λ2 φ2] (lonlat-rads p2)
 
-          L (- λ2 λ1)
+            L (- λ2 λ1)
 
-          tanU1 (* (- 1 f) (Math/tan φ1))
-          cosU1 (/ 1 (Math/sqrt (+ 1 (* tanU1 tanU1))))
-          sinU1 (* tanU1 cosU1)
+            tanU1 (* (- 1 f) (Math/tan φ1))
+            cosU1 (/ 1 (Math/sqrt (+ 1 (* tanU1 tanU1))))
+            sinU1 (* tanU1 cosU1)
 
-          tanU2 (* (- 1 f) (Math/tan φ2))
-          cosU2 (/ 1 (Math/sqrt (+ 1 (* tanU2 tanU2))))
-          sinU2 (* tanU2 cosU2)
+            tanU2 (* (- 1 f) (Math/tan φ2))
+            cosU2 (/ 1 (Math/sqrt (+ 1 (* tanU2 tanU2))))
+            sinU2 (* tanU2 cosU2)
 
-          antimeridian (> (Math/abs L) Math/PI)]
+            antimeridian (> (Math/abs L) Math/PI)]
 
-      (loop [λ L
-             i 0]
-        (let [sinλ (Math/sin λ);
-              cosλ (Math/cos λ);
-              sinSqσ (+ (* cosU2 sinλ cosU2 sinλ)
-                        (* (- (* cosU1 sinU2)
-                              (* sinU1 cosU2 cosλ))
-                           (- (* cosU1 sinU2)
-                              (* sinU1 cosU2 cosλ))))]
-          (if (< (Math/abs sinSqσ)
-                 #?(:cljs js/Number.epsilon
-                    :clj Double/MIN_VALUE))
-            ;; terminate
-            0
-            ;; else
+        (loop [λ L
+               i 0]
+          (let [sinλ (Math/sin λ);
+                cosλ (Math/cos λ);
+                sinSqσ (+ (* cosU2 sinλ cosU2 sinλ)
+                          (* (- (* cosU1 sinU2)
+                                (* sinU1 cosU2 cosλ))
+                             (- (* cosU1 sinU2)
+                                (* sinU1 cosU2 cosλ))))]
+            (if (< (Math/abs sinSqσ)
+                   #?(:cljs js/Number.epsilon
+                      :clj Double/MIN_VALUE))
+              ;; terminate
+              0
+              ;; else
 
-            (let [sinσ (Math/sqrt sinSqσ)
-                  cosσ (+ (* sinU1 sinU2) (* cosU1 cosU2 cosλ))
-                  σ (Math/atan2 sinσ cosσ)
-                  sinα  (/ (* cosU1 cosU2 sinλ)
-                           sinσ);
-                  cosSqα (- 1 (* sinα sinα))
-                  cos2σM (if (zero? cosSqα) 0
-                             (- cosσ (/ (* 2 sinU1 sinU2) cosSqα)))
-                  C (* (/ f 16)
-                       cosSqα
-                       (+ 4 (* f (- 4 (* 3 cosSqα)))))
-                  λ1 λ
-                  λ (+ L (* (- 1 C)
-                            f sinα
-                            (+ σ
-                               (* C sinσ
-                                  (+ cos2σM
-                                     (* C cosσ
-                                        (dec (* 2 cos2σM cos2σM))))))))]
+              (let [sinσ (Math/sqrt sinSqσ)
+                    cosσ (+ (* sinU1 sinU2) (* cosU1 cosU2 cosλ))
+                    σ (Math/atan2 sinσ cosσ)
+                    sinα  (/ (* cosU1 cosU2 sinλ)
+                             sinσ);
+                    cosSqα (- 1 (* sinα sinα))
+                    cos2σM (if (zero? cosSqα) 0
+                               (- cosσ (/ (* 2 sinU1 sinU2) cosSqα)))
+                    C (* (/ f 16)
+                         cosSqα
+                         (+ 4 (* f (- 4 (* 3 cosSqα)))))
+                    λ1 λ
+                    λ (+ L (* (- 1 C)
+                              f sinα
+                              (+ σ
+                                 (* C sinσ
+                                    (+ cos2σM
+                                       (* C cosσ
+                                          (dec (* 2 cos2σM cos2σM))))))))]
 
-              (if (or (> i 1000)
-                      (< (Math/abs (- λ1 λ))
-                         #?(:cljs js/Number.epsilon
-                            :clj Double/MIN_VALUE)))
-                (let [uSq (/ (* cosSqα (- (* a a) (* b b )))
-                             (* b b))
-                      A (+ 1 (* (/ uSq 16384.0)
-                                (+ 4096 (* uSq (+ -768 (* uSq (- 320 (* 175 uSq))))))))
-                      
-                      
-                      B (* (/ uSq 1024) (+ 256 (* uSq (+ -128 (* uSq (- 74 (* 47 uSq)))))))
-                      Δσ (* B sinσ
-                            (+ cos2σM (* (/ B 4)
-                                         (- (* cosσ (+ -1 (* 2 cos2σM cos2σM)))
-                                            (* (/ B 6)
-                                               cos2σM
-                                               (+ -3 (* 4 sinσ sinσ))
-                                               (+ -3 (* 4 cos2σM cos2σM)))))))
+                (if (or (> i 1000)
+                        (< (Math/abs (- λ1 λ))
+                           #?(:cljs js/Number.epsilon
+                              :clj Double/MIN_VALUE)))
+                  (let [uSq (/ (* cosSqα (- (* a a) (* b b )))
+                               (* b b))
+                        A (+ 1 (* (/ uSq 16384.0)
+                                  (+ 4096 (* uSq (+ -768 (* uSq (- 320 (* 175 uSq))))))))
+                        
+                        
+                        B (* (/ uSq 1024) (+ 256 (* uSq (+ -128 (* uSq (- 74 (* 47 uSq)))))))
+                        Δσ (* B sinσ
+                              (+ cos2σM (* (/ B 4)
+                                           (- (* cosσ (+ -1 (* 2 cos2σM cos2σM)))
+                                              (* (/ B 6)
+                                                 cos2σM
+                                                 (+ -3 (* 4 sinσ sinσ))
+                                                 (+ -3 (* 4 cos2σM cos2σM)))))))
 
-                      s (* b A (- σ Δσ))]
-                  s)
-                (recur λ (inc i)))))))))
+                        s (* b A (- σ Δσ))]
+                    s)
+                  (recur λ (inc i))))))))))
 
   (defn geodesic-translation [point distance bearing]
     ;; x is lon y is lat
