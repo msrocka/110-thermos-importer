@@ -30,44 +30,47 @@
   (defn ^GridCoverage2D load-raster [raster]
     (load-it raster)))
 
-(defn get-raster-bounds [raster]
-  (let [raster (load-raster raster)
-        geom (.getEnvelope2D raster)]
+(let [raster-facts                      ; we memoize these fully,
+                                        ; since the outputs are small
+                                        ; and this gets called a lot.
+      (memoize
+       (fn [raster]
+         (log/info "Load summary information for" raster)
+         (let [raster-data (load-raster raster)
 
-    (Geometries/rectangle
-     (.getMinimum geom 0) (.getMinimum geom 1)
-     (.getMaximum geom 0) (.getMaximum geom 1))))
+               envelope (.getEnvelope2D raster-data)
+               bounds  (Geometries/rectangle
+                        (.getMinimum envelope 0) (.getMinimum envelope 1)
+                        (.getMaximum envelope 0) (.getMaximum envelope 1))
 
-(defn get-raster-crs [raster]
-  (let [raster (load-raster raster)
-        crs (.getCoordinateReferenceSystem2D raster)]
-    (CRS/lookupIdentifier crs true)))
-
-(defn rasters->index
-  "Make an index which says which of these rasters (filenames) is where.
+               crs (CRS/lookupIdentifier (.getCoordinateReferenceSystem2D raster-data) true)]
+           ;; the thing we return is just the filename & summary. if
+           ;; we really need the raster's data later we will load it
+           ;; again and hopefully hit a cache in the process.
+           {:raster raster :bounds  bounds :crs crs})))
+      ]
+  (defn rasters->index
+    "Make an index which says which of these rasters (filenames) is where.
   The index is a map from EPSG code to an Rtree of rasters that have that EPSG.
   "
-  [rasters]
-  (log/info "Indexing rasters...")
-  
-  (let [properties                      ; first lookup the properties for each raster
-        (for [raster rasters]
-          (let [crs (get-raster-crs raster)]
-            {:raster raster
-             :bounds (get-raster-bounds raster)
-             :crs crs}))
-        by-crs                          ; bin them by CRS
-        (group-by :crs properties)
+    [rasters]
+    (log/info "Indexing rasters...")
+    
+    (let [properties                      ; first lookup the properties for each raster
+          (map raster-facts rasters)
+          
+          by-crs                          ; bin them by CRS
+          (group-by :crs properties)
 
-        indices                         ; for each CRS, stuff them into an Rtree
-        (for [[crs rasters] by-crs]
-          [crs
-           (reduce
-            (fn [index {raster :raster bounds :bounds}]
-              (.add index raster bounds))
-            (RTree/create) rasters)])
-        ]
-    (into {} indices)))
+          indices                         ; for each CRS, stuff them into an Rtree
+          (for [[crs rasters] by-crs]
+            [crs
+             (reduce
+              (fn [index {raster :raster bounds :bounds}]
+                (.add index raster bounds))
+              (RTree/create) rasters)])
+          ]
+      (into {} indices))))
 
 (defn- find-rasters
   "Locate all the rasters that overlap the bounds of shape."
