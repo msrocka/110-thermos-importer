@@ -225,7 +225,24 @@
    features))
 
 (defn add-connections
-  [crs buildings noded-paths & {:keys [connect-to-connectors shortest-face-length]
+  "Draw connectors from paths to buildings.
+
+  `buildings` and `noded-paths` are both seqs of geoio feature maps.
+
+  Returns a tuple of updated buildings and paths, so that:
+  - every building has also got `::connects-to-node` on it
+  - paths contains new connectors + subdivided paths so that buildings are connected to paths
+
+  If `source-field` and `target-field` are provided in `:copy-field`, then
+  buildings will also take on the value of `source-field` in the input path they got connected to.
+
+  If `connect-to-connectors` is true, connectors may be drawn to other connectors.
+
+  `shortest-face-length` affects where connectors to go - ideally to the midpoint of a face at least this long.
+  Otherwise they go to wherever (a corner or something)
+  "
+  [crs buildings noded-paths & {[source-field target-field] :copy-field
+                                :keys [connect-to-connectors shortest-face-length]
                                 :or {connect-to-connectors false
                                      shortest-face-length 3}}]
   
@@ -236,7 +253,7 @@
                                     (update ::start-node reproject-1 transform)
                                     (update ::end-node reproject-1 transform))))
 
-        transform (sensible-projection :azimuthal-equidistant crs buildings)
+        transform (sensible-projection :utm-zone crs buildings)
         buildings (reproject buildings transform)
         
         noded-paths (-> noded-paths
@@ -245,7 +262,6 @@
                         ;; make IDs consistent. TODO there is a risk
                         ;; here that this will break the noding?
                         (reproject-endpoints transform))
-
 
         building-nodes (atom {}) ;; maps building IDs to nodes where they connect
 
@@ -259,7 +275,22 @@
         ;; an index of all the vertices that exist
         node-index (features->index nodes)
 
-        ;; TODO factor this repeated code :
+        ;; this atom below maps from node ID to source-field value of
+        ;; input path, for use when :copy-field is supplied. it is
+        ;; kept up-to-date by operations below that introduce new
+        ;; paths, and used at the end to assoc target-field onto
+        ;; buildings.
+        node->source-field
+        (atom
+         (when (and target-field source-field)
+           (reduce
+            (fn [out path]
+              (let [source-field (get path source-field)]
+                (assoc out
+                       (::geoio/id (::start-node path)) source-field
+                       (::geoio/id (::end-node path)) source-field)))
+            {} noded-paths)))
+
         factory (GeometryFactory. (PrecisionModel.)
                                   (CRS/lookupEpsgCode
                                    (CRS/decode crs true)
@@ -312,6 +343,13 @@
                         p-start (assoc p-start ::end-node new-node ::split-type "start-half")
                         p-end (assoc p-end ::start-node new-node ::split-type "end-half")
                         ]
+
+                    ;; copy the source-field from the path into the node lookup.
+                    (when source-field
+                      (swap! node->source-field assoc
+                             (::geoio/id new-node)
+                             (get p source-field)))
+                    
                     ;; we need to delete p from the path-index
                     (index-remove! path-index p)
 
@@ -329,15 +367,21 @@
             (if (> distance SMALL_DISTANCE)
               ;; we need a connecting line!
               (let [new-end-node (make-node (.getCoordinate on-b))
-                    connector (make-path {::start-node connect-to-node
-                                          ::end-node new-end-node
-                                          :connector true
-                                          :subtype "Connector"}
+                    connector (make-path (cond->
+                                             {::start-node connect-to-node
+                                              ::end-node new-end-node
+                                              :connector true
+                                              :subtype "Connector"
+                                              }
+                                           source-field (assoc source-field (get source-field p)))
                                          [split-point (.getCoordinate on-b)])]
                 ;; we need to add the connector to the path index
                 (index-insert! path-index connector)
                 ;; we need to add the connector's end node to the node index
                 (index-insert! node-index new-end-node)
+                ;; we need to record the new-end-node as having relevant source field
+                (when source-field
+                  (swap! node->source-field assoc (::geoio/id new-end-node) (get p source-field)))
                 ;; we need to write down the building connection
                 (swap! building-nodes update (::geoio/id b) conj new-end-node))
 
@@ -442,9 +486,19 @@
           ;; relate buildings to their connecting nodes
           ;; we reproject the nodes back out to make their IDs good first.
           buildings (for [building buildings]
-                      (assoc building ::connects-to-node
-                             (for [node (building-nodes (::geoio/id building))]
-                               (::geoio/id (reproject-1 node inverse-transform)))))
+                      (cond->
+                          (assoc building ::connects-to-node
+                                 (for [node (building-nodes (::geoio/id building))]
+                                   (::geoio/id (reproject-1 node inverse-transform))))
+
+                        ;; if we have a target field, copy the first
+                        ;; source-field from a connecting node
+                        (and source-field target-field)
+                        (assoc target-field
+                               (->> (building-nodes (::geoio/id building))
+                                    (map ::geoio/id)
+                                    (keep @node->source-field)
+                                    (first)))))
 
           ;; swap to the output coordinate system for start/end nodes
           add-area #(assoc % ::area (.getArea ^Geometry (::geoio/geometry %)))
