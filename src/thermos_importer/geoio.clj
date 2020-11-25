@@ -14,7 +14,7 @@
             [org.geotools.geojson.feature FeatureJSON]
             [org.geotools.geojson.geom GeometryJSON]
             [org.geotools.geopkg GeoPackage FeatureEntry]
-            [org.geotools.data FileDataStoreFinder DataUtilities]
+            [org.geotools.data FileDataStoreFinder DataUtilities DataStoreFinder]
             [org.geotools.data.simple SimpleFeatureCollection]
             [org.geotools.data.collection ListFeatureCollection]
             [org.geotools.feature.simple SimpleFeatureBuilder]
@@ -112,31 +112,44 @@
 (defn geom->map [geom]
   (update-geometry {} geom))
 
-(defn- read-from-store [store & {:keys [force-crs key-transform]}]
-  (.setCharset store (StandardCharsets/UTF_8))
-  (let [feature-source (->> store .getTypeNames first (.getFeatureSource store))
-        crs (-> feature-source .getInfo .getCRS)
+(defn- read-from-store [store & {:keys [force-crs key-transform table-name]
+                                 :or {table-name :all}
+                                 :as opts}]
+  (try (.setCharset store (StandardCharsets/UTF_8))
+       (catch Exception e))
+  (loop [type-names (if (= :all table-name)
+                      (into [] (.getTypeNames store))
+                      [table-name])
+         features   []
+         crs        force-crs]
+    (if-not (empty? type-names)
+      (let [[tn & type-names] type-names
+            source (.getFeatureSource store tn)
+            source-crs (-> source .getInfo .getCRS)
 
-        features (for [feature (doall (->> feature-source
-                                           .getFeatures
-                                           .features
-                                           feature-iterator-seq))
-                       :when feature
-                       :let [m (feature->map feature key-transform)]
-                       :when (::geometry m)]
-                   m)
+            source-features
+            (for [feature (doall (->> source
+                                      (.getFeatures)
+                                      (.features)
+                                      (feature-iterator-seq)))
+                  :when feature
+                  :let [m (feature->map feature key-transform)]
+                  :when (::geometry m)]
+              (assoc m ::table tn))
 
-        features (if force-crs
-                   (map (reprojector crs force-crs) features)
-                   features)
+            target-crs (or crs source-crs)
 
-        crs-id (if force-crs
-                 force-crs
-                 (CRS/lookupIdentifier crs true))
-        ]
+            source-features
+            (map (reprojector source-crs target-crs) source-features)
+            ]
+        (recur type-names
+               (into features source-features)
+               target-crs))
 
-    
-    {::features features ::crs crs-id}))
+      ;; output
+      {::features features ::crs (-> crs
+                                     (decode-crs)
+                                     (CRS/lookupIdentifier true))})))
 
 (defn read-from-geojson-2 [reader & {:keys [force-crs key-transform homogenise-keys]
                                      :or {key-transform keyword}}]
@@ -234,6 +247,15 @@
         (read-from-store store :force-crs force-crs :key-transform key-transform)
         (finally (.dispose store)))
 
+      (or (has-extension filename "gpkg")
+          (has-extension filename "geopackage"))
+      (let [store (DataStoreFinder/getDataStore {"dbtype" "geopkg"
+                                                 "database" (.getCanonicalPath filename)})]
+        (try
+          (read-from-store store :force-crs force-crs :key-transform key-transform)
+          (finally (.dispose store))))
+      
+      
       (or (has-extension filename "json")
           (has-extension filename "geojson"))
       (with-open [r (io/reader filename)]
@@ -466,4 +488,3 @@
     [feature]))
 
 (defn explode-multis [shapes] (mapcat explode-multi shapes))
-
