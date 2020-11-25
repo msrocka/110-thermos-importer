@@ -546,8 +546,24 @@
       (= an b0)
       (make-linestring (into-array Coordinate (concat coords-a coords-b)))
 
-      :otherwise (throw (IllegalArgumentException. (format "No touching endpoints: %s %s %s %s"
-                                                           a0 an b0 bn))))))
+      ;;; nearly there
+      (< (Math/abs (.distance a0 b0)) 0.00001)
+      (make-linestring (into-array Coordinate (concat (reverse coords-b) coords-a)))
+      
+      (< (Math/abs (.distance a0 bn)) 0.00001)
+      (make-linestring (into-array Coordinate (concat coords-b coords-a)))
+      
+      (< (Math/abs (.distance an bn)) 0.00001)
+      (make-linestring (into-array Coordinate (concat coords-a (reverse coords-b))))
+
+      (< (Math/abs (.distance an b0)) 0.00001)
+      (make-linestring (into-array Coordinate (concat coords-a coords-b)))
+      
+      :otherwise
+      (throw
+       (ex-info "Concatenating linestrings which do not touch"
+                {:a a :b b}))
+      )))
 
 
 (defn- add-endpoints [feature]
