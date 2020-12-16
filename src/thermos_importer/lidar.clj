@@ -272,9 +272,11 @@
 
   (let [height  (::height feature)
         
-        storeys (or (::storeys feature)
-                    ;; should we round up here?
-                    (and height (Math/ceil (/ height *storey-height*))))
+        storeys (max 1
+                     (or (::storeys feature)
+                         ;; should we round up here?
+                         (and height (int (Math/floor (/ height *storey-height*))))
+                         1))
 
         height     (or height
                        ;; this might be bogus - if we know the storeys and not height
