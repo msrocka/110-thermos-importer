@@ -3,11 +3,12 @@
   (:require [thermos-importer.geoio :as geoio]
             [better-cond.core :refer [cond]]
             [clojure.tools.logging :as log]
-            [cljts.core :as jts])
+            [cljts.core :as jts]
+            [clojure.set :as set])
   (:import [com.github.davidmoten.rtree RTree Entry]
            [com.github.davidmoten.rtree.geometry Geometries Rectangle]
 
-           [org.locationtech.jts.geom Geometry Point Envelope PrecisionModel GeometryFactory Coordinate]
+           [org.locationtech.jts.geom Geometry Point Envelope PrecisionModel GeometryFactory Coordinate LineString]
            [org.locationtech.jts.operation.distance DistanceOp GeometryLocation]
            [org.locationtech.jts.noding
             SegmentString MCIndexNoder NodedSegmentString IntersectionAdder
@@ -86,6 +87,32 @@
               .toBlocking .toIterable)]
      (.value entry))))
 
+(defn point-neighbours
+  "Given `index` and a `point`, find values in the index which are near the point"
+  [index point & {:keys [distance limit]
+                  :or {distance NEARNESS limit NEIGHBOURS}}]
+  (let [point (cond
+                (instance? com.github.davidmoten.rtree.geometry.Point point)
+                point
+
+                (vector? point)
+                (Geometries/point (first point) (second point))
+
+                (instance? Point point)
+                (let [coord (.getCoordinate ^Point point)]
+                  (Geometries/point (.getX coord) (.getY coord)))
+
+                (instance? Coordinate point)
+                (Geometries/point (.getX ^Coordinate point) (.getY ^Coordinate point))
+                
+                :else (throw (ex-info "Unable to convert to a point" {:point point})))
+
+        ^RTree index @index]
+    (for [^Entry entry
+          (-> (.nearest index point (double distance) (int limit))
+              .toBlocking .toIterable)]
+      (.value entry))))
+
 (defn feature-overlaps
   "Given an INDEX and a FEATURE, find the values in the index whose
   bounding boxes overlap the feature's bounding box"
@@ -116,7 +143,7 @@
 
 (defn sensible-projection
   "Create a projection of a certain type for the given features in their input CRS"
-  [type input-crs features]
+  ^MathTransform [type input-crs features]
   (let [input-crs (CRS/decode input-crs true)
         ^Envelope2D bounding-box
         (reduce (fn ^Envelope2D [^Envelope2D box feat]
@@ -525,8 +552,6 @@
    (.getCoordinates ^Geometry (::geoio/geometry feature))
    feature))
 
-
-
 (defn- concat-linestrings [^Geometry a ^Geometry b]
   (let [coords-a (.getCoordinates a)
         coords-b (.getCoordinates b)
@@ -657,13 +682,103 @@
     paths
     ))
 
+(defn- snap-to [path position path-index distance]
+  (let [^LineString geometry (::geoio/geometry path)
+        position (case position
+                   :first 0
+                   :last  (dec (.getNumPoints geometry))
+                   (int position))
+        coord (.getCoordinateN geometry position)
+
+        [^Coordinate snap-point distance]
+        (loop [ns (remove #{path}
+                          (point-neighbours path-index coord
+                                            :distance distance :limit 100))
+               d Double/MAX_VALUE
+               c nil]
+          (if (seq ns)
+            (let [[n & ns] ns
+                  geom (::geoio/geometry n)
+                  [d' c'] (jts/find-closest-coord geom coord)
+                  d' (double d')]
+              (cond
+                (zero? d') nil
+
+                (and (<= d' distance) ;; it's close and we already overlap, skip
+                     (jts/intersects? geometry geom))
+                nil
+                
+                (and (<= d' d)
+                     (<= d' distance))
+                
+                (recur ns d' c')
+                :else (recur ns d c)))
+            [c d]))
+        ]
+    (if snap-point
+      (do
+        (index-remove! path-index path) ;; icky side-effects
+        (let [coords (.getCoordinates geometry)
+              dx (- (.getX snap-point) (.getX coord))
+              dy (- (.getY snap-point) (.getY coord))
+              oversnap (Coordinate. (+ (* 1.001 dx) (.getX coord))
+                                    (+ (* 1.001 dy) (.getY coord)))
+              ]
+          (aset coords position oversnap)
+          (let [new-path (-> (geoio/update-geometry
+                              path (make-linestring coords))
+                             (update ::snap conj [position distance]))]
+            (index-insert! path-index new-path) ;; urgh
+            new-path)))
+
+      path)))
+
+(defn connect-nearly-connected-paths
+  "Function for filling in tiny holes in a network.
+  
+  - `paths` is a sequence of geometry maps that are all polylines.
+  - `distance` is how many CRS units we may extend any path
+
+  Return a modified version of `paths` in which any path whose
+  endpoint was near but not touching another path is moved onto that
+  second path.
+  "
+  [paths & {:keys [distance] :or {distance SMALL_DISTANCE}}]
+
+  (let [path-index (features->index paths)]
+    ;; this is a bit grotty, as snap-to-path is impure
+    ;; and mutates path-index.
+    (for [path paths]
+      (-> path
+          (snap-to 0      path-index distance)
+          (snap-to :last  path-index distance)))))
+
 (defn node-paths
   "Takes paths, nodes it, and returns the noded paths. Original metadata
   are transferred onto the new paths.
   The noded paths may reasonably form a multigraph, which is interesting.
+
+  If `snap-tolerance` is a number, try snapping points at this distance.
+  If you give `snap-tolerance` in metres and paths are in lon/lat, supply a CRS also
+
+  The paths will be reprojected into a sensible CRS, where the noding will happen.
   "
-  [paths]
-  (let [noder (MCIndexNoder.)
+  [paths & {:keys [snap-tolerance crs]}]
+  
+  (let [[project unproject-1]
+        (if crs
+          (let [transform   (sensible-projection :utm-zone crs paths)
+                transform'  (.inverse transform)]
+            [#(reproject % transform) #(reproject-1 % transform')])
+          [identity identity])
+
+        paths (project paths)
+        
+        paths (cond-> paths
+                (number? snap-tolerance)
+                (connect-nearly-connected-paths :distance snap-tolerance))
+        
+        noder (MCIndexNoder.)
         intersector (IntersectionAdder. (RobustLineIntersector.))
         ]
 
@@ -688,5 +803,99 @@
                      new-id (geoio/geometry->id new-geom)]]
            (-> feature
                (geoio/update-geometry new-geom)
+               (unproject-1) ;; hmm
                (add-endpoints))))))))
+
+(defn- conjs [s x] (conj (or s #{}) x))
+
+(defn trim-dangling-paths
+  "Given some `paths` which have been noded and connected to `buildings`,
+  trim any dangling paths having `::length` shorter than `length`."
+  [paths buildings length]
+
+  ;; a path is a dangling path if it has a non-building vertex with degree 1
+
+  (let [by-vertex
+        (reduce
+         (fn [by-vertex path]
+           (let [path-id  (::geoio/id path)
+                 start-id (::geoio/id (::start-node path))
+                 end-id   (::geoio/id (::end-node path))]
+             (-> by-vertex
+                 (update start-id conjs path-id)
+                 (update end-id   conjs path-id))))
+         
+         {} paths)
+
+        degree
+        (reduce-kv
+         (fn [degree vtx paths]
+           (assoc degree vtx (count paths)))
+         {} by-vertex)
+
+        degree ;; count up buildings as well (so a vertex at a
+               ;; building has degree at least 3); this is a hack
+               ;; which means when we remove vertices below that are
+               ;; to do with paths, we never get a building down to 1
+        (reduce
+         (fn [degree building]
+           (merge-with + degree (zipmap (::connects-to-node building) (repeat 2))))
+         degree buildings)
+
+        paths-by-id (->> (for [p paths] [(::geoio/id p) p]) (into {}))
+        ]
+    ;; so now we loop until we have pruned everything prune-able
+    (loop [degree degree
+           paths-by-id paths-by-id
+           by-vertex by-vertex
+           n 0
+           ]
+
+      ;; find all the degree-1 vertices; we can delete their paths
+      (let [d1-vertices (for [[vertex degree] degree :when (== 1 degree)] vertex)]
+        (if (and (seq d1-vertices) (< n 10))
+          (let [[degree paths-by-id by-vertex]
+                ;; loop over these vertices and delete them, updating degree & paths-by-id
+                (loop [d1-vertices d1-vertices
+                       degree degree
+                       paths-by-id paths-by-id
+                       by-vertex by-vertex]
+                  (if (seq d1-vertices)
+                    (let [[vertex & d1-vertices] d1-vertices ;; get a vertex
+
+                          ;; by definition, by-vertex vertex has degree 1
+                          ;; unless we already reduced its degree to zero elsewhere.
+                          path-id (first (get by-vertex vertex))
+                          ]
+                      
+                      (if path-id
+                        (let [path     (get paths-by-id path-id)
+                              start-id (::geoio/id (::start-node path))
+                              end-id   (::geoio/id (::end-node path))
+
+                              ;; reduce degree of the path's nodes
+                              degree (-> degree
+                                         (update start-id dec)
+                                         (update end-id dec))
+
+                              ;; delete the path
+                              paths-by-id (dissoc paths-by-id path-id)
+
+                              ;; remove the path from by-vertex so that
+                              ;; the above destructuring [path] works next
+                              ;; time round.
+                              by-vertex (-> by-vertex
+                                            (update start-id disj path-id)
+                                            (update end-id   disj path-id))
+                              ]
+                          (recur d1-vertices degree paths-by-id by-vertex))
+                        ;; skip it
+                        (recur d1-vertices degree paths-by-id by-vertex)))
+                    [degree paths-by-id by-vertex]))]
+            
+            ;; retry the outer loop
+            (recur degree paths-by-id by-vertex (inc n)))
+
+          ;; no more degree-1 vertices:
+          (vals paths-by-id))))))
 
