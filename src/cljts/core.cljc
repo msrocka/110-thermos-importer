@@ -7,7 +7,7 @@
             Geometry Polygon Point LineString MultiLineString
             LinearRing
             MultiPoint MultiPolygon]
-           [org.locationtech.jts.operation.distance DistanceOp]
+           [org.locationtech.jts.operation.distance DistanceOp GeometryLocation]
            [java.security MessageDigest]
            [java.util Base64 Base64$Encoder]
            [org.geotools.geojson.geom GeometryJSON]))
@@ -317,7 +317,22 @@
          (.update md5 (.toFixed (.-y c) 8)))
        (.substring (base64/encodeByteArray (.digest md5)) 0 16))))
 
+(defn find-closest-coord
+  "Given geometry `geom` and a point, return a tuple [distance, coord on geom]
+  which minimises distance."
+  [geom point]
 
+  (let [point (create-point point) ;; make sure it's a point
+        
+        op (#?(:cljs
+               jsts/operation.distance.DistanceOp.
+               :clj
+               DistanceOp.)
+            geom
+            point)
+        ]
+
+    [(.distance op) (aget (.nearestPoints op) 0)]))
 
 (defn cut-line-string
   "Given a linestring geometry and a point geometry,
