@@ -36,12 +36,12 @@
   (defn- make-linestring ^Geometry [^"[Lorg.locationtech.jts.geom.Coordinate;" coords]
     (.createLineString factory coords))
 
-  (defn- make-multipoint [coordinates]
-    (->> coordinates
-         (filter identity)
-         (map #(.createPoint factory %))
-         (into-array Point)
-         (.createMultiPoint factory))))
+  (defn- make-multipoint ^Geometry [coordinates]
+    (let [points (->> coordinates
+                      (filter identity)
+                      (map #(.createPoint factory ^Coordinate %))
+                      (into-array Point))]
+      (.createMultiPoint factory ^"[Lorg.locationtech.jts.geom.Point;" points))))
 
 (defn feature->rect ^Rectangle [feature]
   (let [^Geometry geometry (::geoio/geometry feature)
@@ -91,25 +91,28 @@
   "Given `index` and a `point`, find values in the index which are near the point"
   [index point & {:keys [distance limit]
                   :or {distance NEARNESS limit NEIGHBOURS}}]
-  (let [point (cond
-                (instance? com.github.davidmoten.rtree.geometry.Point point)
-                point
+  (let [point 
+        (cond
+          (instance? com.github.davidmoten.rtree.geometry.Point point)
+          point
 
-                (vector? point)
-                (Geometries/point (first point) (second point))
+          (vector? point)
+          (Geometries/point ^double (first point) ^double (second point))
 
-                (instance? Point point)
-                (let [coord (.getCoordinate ^Point point)]
-                  (Geometries/point (.getX coord) (.getY coord)))
+          (instance? Point point)
+          (let [coord (.getCoordinate ^Point point)]
+            (Geometries/point (.getX coord) (.getY coord)))
 
-                (instance? Coordinate point)
-                (Geometries/point (.getX ^Coordinate point) (.getY ^Coordinate point))
-                
-                :else (throw (ex-info "Unable to convert to a point" {:point point})))
+          (instance? Coordinate point)
+          (Geometries/point (.getX ^Coordinate point) (.getY ^Coordinate point))
+          
+          :else (throw (ex-info "Unable to convert to a point" {:point point})))
 
         ^RTree index @index]
     (for [^Entry entry
-          (-> (.nearest index point (double distance) (int limit))
+          (-> (.nearest index
+                        ^com.github.davidmoten.rtree.geometry.Point point
+                        (double distance) (int limit))
               .toBlocking .toIterable)]
       (.value entry))))
 
@@ -433,10 +436,10 @@
 
         connect-faces
         (fn [building path]
-          (let [boundary ^Geometry (.getBoundary (::geoio/geometry building))
+          (let [boundary ^Geometry (.getBoundary ^Geometry (::geoio/geometry building))
                 boundary-coords (.getCoordinates boundary)
                 connection-points (make-multipoint
-                                   (for [[a b] (partition 2 1 boundary-coords)
+                                   (for [[^Coordinate a ^Coordinate b] (partition 2 1 boundary-coords)
                                          :let [distance (.distance a b)]
                                          :when (> distance shortest-face-length)]
                                      (Coordinate.
@@ -555,8 +558,8 @@
 (defn- concat-linestrings [^Geometry a ^Geometry b]
   (let [coords-a (.getCoordinates a)
         coords-b (.getCoordinates b)
-        a0 (first coords-a) an (last coords-a)
-        b0 (first coords-b) bn (last coords-b)
+        ^Coordinate a0 (first coords-a) ^Coordinate an (last coords-a)
+        ^Coordinate b0 (first coords-b) ^Coordinate bn (last coords-b)
         ]
     (cond
       (= a0 b0)
