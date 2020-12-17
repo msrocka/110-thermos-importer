@@ -1,7 +1,9 @@
-{:paths ["src" "resources"]
+{:paths ["src" "resources" "test"]
  :mvn/repos
- {"boundless" {:url "http://repo.boundlessgeo.com/main"}
-  "central" {:url "https://repo1.maven.org/maven2/"}}
+ {"OSGeo" {:url "https://repo.osgeo.org/repository/release"},
+  "central" {:url "https://repo1.maven.org/maven2/"},
+  "clojars" {:url "https://clojars.org/repo"},
+  "geotools" {:url "https://download.osgeo.org/webdav/geotools/"}}
  :deps
  {org.clojure/clojure {:mvn/version"1.9.0"}
   org.clojure/tools.cli {:mvn/version"0.3.5"}
