@@ -687,11 +687,11 @@
 
 (defn- snap-to [path position path-index distance]
   (let [^LineString geometry (::geoio/geometry path)
-        position (case position
+        index (case position
                    :first 0
                    :last  (dec (.getNumPoints geometry))
                    (int position))
-        coord (.getCoordinateN geometry position)
+        coord (.getCoordinateN geometry index)
 
         [^Coordinate snap-point distance]
         (loop [ns (remove #{path}
@@ -721,16 +721,28 @@
     (if snap-point
       (do
         (index-remove! path-index path) ;; icky side-effects
-        (let [coords (.getCoordinates geometry)
+        (let [old-coords (.getCoordinates geometry)
+              coords (make-array Coordinate (inc (.getNumPoints geometry)))
               dx (- (.getX snap-point) (.getX coord))
               dy (- (.getY snap-point) (.getY coord))
-              oversnap (Coordinate. (+ (* 1.001 dx) (.getX coord))
-                                    (+ (* 1.001 dy) (.getY coord)))
+              ;; for reasons unknown, the snap-point is sometimes not
+              ;; quite on the line probably number precision issues.
+              ;; so, we move it a little bit further that way. Not lovely.
+              snap-point (Coordinate. (+ (* 1.001 dx) (.getX coord))
+                                      (+ (* 1.001 dy) (.getY coord)))
+              index (if (= position :last) (inc index) index)
               ]
-          (aset coords position oversnap)
+          ;; copy the new coordinate
+          (aset coords index snap-point)
+          ;; copy the old coordinates
+          (dotimes [i (alength old-coords)]
+            (aset coords
+                  (+ i (if (>= i index) 1 0))
+                  (aget old-coords i)))
+
           (let [new-path (-> (geoio/update-geometry
                               path (make-linestring coords))
-                             (update ::snap conj [position distance]))]
+                             (update ::snap conj [index distance]))]
             (index-insert! path-index new-path) ;; urgh
             new-path)))
 
@@ -813,8 +825,8 @@
 
 (defn trim-dangling-paths
   "Given some `paths` which have been noded and connected to `buildings`,
-  trim any dangling paths having `::length` shorter than `length`."
-  [paths buildings length]
+  trim any dangling paths"
+  [paths buildings]
 
   ;; a path is a dangling path if it has a non-building vertex with degree 1
 
