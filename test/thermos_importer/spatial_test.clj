@@ -7,24 +7,22 @@
 
 (t/deftest test-node-paths
   (let [cross (geoio/read-from (io/resource "thermos_importer/cross-paths.json"))
-        noded (spatial/node-paths (::geoio/features cross))
-        ]
+        noded (spatial/node-paths (::geoio/features cross))]
     ;; cross is two lines which cross, having property "label" A and B.
     ;; this should produce four lines, two A and two B, which all share a common vertex
 
     (t/is (= 4 (count noded)))
     (t/is (= 2 (count (filter (comp #{"A"} :label) noded))))
     (t/is (= 2 (count (filter (comp #{"B"} :label) noded))))
-
     
-    (t/is (->> noded ;; 5 distinct vertices
-               (mapcat (juxt ::spatial/start-node ::spatial/end-node))
-               (map ::geoio/id)
-               (frequencies)
-               (vals)
-               (frequencies)
-               ;; i.e. 4 vertices occur once, 1 occurs 4 times
-               (= {4 1, 1 4})))
+    (t/is (= {4 1, 1 4} ;; i.e. 4 vertices occur once, 1 occurs 4 times
+             (->> noded ;; 5 distinct vertices
+                  (mapcat (juxt ::spatial/start-node ::spatial/end-node))
+                  (map ::geoio/id)
+                  (frequencies)
+                  (vals)
+                  (frequencies)
+                  )))
     ))
 
 (t/deftest test-snap-paths
@@ -64,6 +62,25 @@
           (frequencies)
           (= {"B" 2 "A" 2 "C" 1 "D" 1})))
     ))
+
+(t/deftest test-snap-path-ends
+  (let [snap (geoio/read-from (io/resource "thermos_importer/snap-ends.json"))
+        noded (spatial/node-paths (::geoio/features snap)
+                                  :snap-tolerance 30
+                                  :crs (::geoio/crs snap))
+        
+
+        [a b] noded
+        ]
+
+    (t/is (.touches (::geoio/geometry a)
+                    (::geoio/geometry b)))
+    )
+
+  
+    )
+
+    
 
 
 (t/deftest test-connect-buildings

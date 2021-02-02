@@ -693,10 +693,11 @@
                    (int position))
         coord (.getCoordinateN geometry index)
 
-        [^Coordinate snap-point distance]
+        [neighbour ^Coordinate snap-point distance]
         (loop [ns (remove #{path}
                           (point-neighbours path-index coord
                                             :distance distance :limit 100))
+               neighbour nil
                d Double/MAX_VALUE
                c nil]
           (if (seq ns)
@@ -714,9 +715,10 @@
                 (and (<= d' d)
                      (<= d' distance))
                 
-                (recur ns d' c')
-                :else (recur ns d c)))
-            [c d]))
+                (recur ns n d' c')
+                
+                :else (recur ns neighbour d c)))
+            [neighbour c d]))
         ]
     (if snap-point
       (do
@@ -725,11 +727,18 @@
               coords (make-array Coordinate (inc (.getNumPoints geometry)))
               dx (- (.getX snap-point) (.getX coord))
               dy (- (.getY snap-point) (.getY coord))
-              ;; for reasons unknown, the snap-point is sometimes not
-              ;; quite on the line probably number precision issues.
-              ;; so, we move it a little bit further that way. Not lovely.
-              snap-point (Coordinate. (+ (* 1.001 dx) (.getX coord))
-                                      (+ (* 1.001 dy) (.getY coord)))
+
+              neigbhour-coordinates (.getCoordinates (::geoio/geometry neighbour))
+              
+              snap-point
+              (if (.contains (java.util.Arrays/asList neigbhour-coordinates) snap-point)
+                snap-point ;; if the point is definitely within the geometry, just keep it
+
+                ;; otherwise we shift it a little to make sure it crosses over
+                ;; to fix issue with numerical instability
+                (Coordinate. (+ (* 1.001 dx) (.getX coord))
+                             (+ (* 1.001 dy) (.getY coord))))
+              
               index (if (= position :last) (inc index) index)
               ]
           ;; copy the new coordinate
