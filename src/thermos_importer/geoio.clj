@@ -84,7 +84,7 @@
          ::id (jts/ghash geom))
     (dissoc feature ::geometry ::type ::id)))
 
-(defn- decode-crs [crs]
+(defn decode-crs [crs]
   (cond
     (instance? org.opengis.referencing.crs.CoordinateReferenceSystem crs) crs
     (string? crs) (CRS/decode crs true)

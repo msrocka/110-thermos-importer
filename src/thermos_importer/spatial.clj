@@ -144,18 +144,33 @@
       (format "326%02d" utm-band)
       (format "327%02d" utm-band))))
 
+
+(defn extent 
+  "Returns a bounding box that encloses a set of geometries"
+  [features crs]
+  (let [crs (geoio/decode-crs crs)]
+    (reduce (fn ^Envelope2D [^Envelope2D box feat]
+              (.include box (JTS/getEnvelope2D
+                             (.getEnvelopeInternal ^Geometry (::geoio/geometry feat))
+                             crs))
+              box)
+            (Envelope2D.)
+            features)))
+
+(defn centroid
+  "Returns the centroid of the bounding box that encloses a set of geometries"
+  [features crs]
+  (let [crs (geoio/decode-crs crs)
+        ^Envelope2D bounding-box (extent features crs)]
+    
+        {:lat (.getMedian bounding-box 1)
+         :lng (.getMedian bounding-box 0)}))
+
 (defn sensible-projection
   "Create a projection of a certain type for the given features in their input CRS"
   ^MathTransform [type input-crs features]
   (let [input-crs (CRS/decode input-crs true)
-        ^Envelope2D bounding-box
-        (reduce (fn ^Envelope2D [^Envelope2D box feat]
-                  (.include box (JTS/getEnvelope2D
-                                 (.getEnvelopeInternal ^Geometry (::geoio/geometry feat))
-                                 input-crs))
-                  box)
-                (Envelope2D.)
-                features)
+        ^Envelope2D bounding-box (extent features input-crs)
 
         lat-centre (.getMedian bounding-box 1)
         lon-centre (.getMedian bounding-box 0)
