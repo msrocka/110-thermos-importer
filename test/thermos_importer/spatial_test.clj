@@ -136,3 +136,14 @@
                    ;; node in the middle of the topology now. It could
                    ;; get simplified out at some point.
                    )))))
+
+(t/deftest test-centroid
+  (let [geojson (geoio/read-from (io/resource "thermos_importer/centroid.json"))
+        features (::geoio/features geojson)]
+    
+    (t/is (= {:lat 51.446683924657314, :lng -2.590222547982308} 
+             (spatial/centroid features "EPSG:4326")))
+    (t/is (= {:lat 51.446683924657314, :lng -2.590222547982308}
+             (spatial/centroid features 4326)))
+    (t/is (= {:lat 51.446683924657314, :lng -2.590222547982308}
+             (spatial/centroid features (geoio/decode-crs  "EPSG:4326"))))))
