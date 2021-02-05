@@ -260,8 +260,7 @@
              ::tot-surface-per-volume tot-surface-per-volume))
 
     (catch ArithmeticException e
-      (log/error e "deriving-3d-fields"
-                 (dissoc feature ::geoio/geometry))
+      (log/error e "deriving-3d-fields" (pr-str (dissoc feature ::geoio/geometry)))
       (throw e))))
 
 (defn derive-more-fields [feature]
@@ -288,13 +287,14 @@
 
         shared-perimeter (::shared-perimeter feature)
         ]
-
+    
     (cond-> feature
       storeys    (assoc ::storeys storeys)
       height     (assoc ::height height)
       floor-area (assoc ::floor-area floor-area)
       shared-perimeter (derive-2d-fields)
-      (and shared-perimeter height (pos? height))
+      (and shared-perimeter height (pos? height)
+           (pos? (::footprint feature 0)))
       (derive-3d-fields))))
 
 (defn envelope-covers-tree [raster-crs raster-tree
@@ -326,7 +326,7 @@
   [shapes index & {:keys [buffer-size ground-level-threshold]
                    :or {buffer-size 1.5
                         ground-level-threshold -5}}]
-  
+
   (log/info (count (::geoio/features shapes)) "shapes to lidarize")
   
   (let [shapes-crs (::geoio/crs shapes)
@@ -359,8 +359,12 @@
     (as-> shapes shapes
       (geoio/update-features shapes :estimate-party-walls estimate-party-walls feature-index)
       (geoio/update-features shapes :footprint-and-perimeter add-footprint-and-perimeter)
-      ;; remove any shapes with zero footprint
-      (update shapes ::geoio/features #(filter (comp pos? ::footprint) %))
+      ;; remove any polygonal shapes with zero footprint
+      (update shapes ::geoio/features #(filter (fn [f]
+                                                 (or
+                                                  (pos? (::footprint f))
+                                                  (not= :polygon (::geoio/type f))))
+                                               %))
 
       (if index
         ;; mangle shapes
@@ -370,22 +374,25 @@
              (geoio/update-features
               shapes :intersect-with-lidar
               (fn [feature]
-                (merge (try
-                         (shape->dimensions
-                          raster-tree
-                          (JTS/transform (::geoio/geometry feature) transform)
-                          
-                          buffer-size
-                          ground-level-threshold)
-                         (catch Exception e
-                           (.printStackTrace e)
-                           (log/error
-                            e "Error adding lidar data to %s: %s\n"
-                            (dissoc feature ::geoio/geometry)
-                            (.getMessage e))
-                           {}))
+                (if (= :polygon (::geoio/type feature))
+                  (merge
+                   (try
+                     (shape->dimensions
+                      raster-tree
+                      (JTS/transform (::geoio/geometry feature) transform)
+                      
+                      buffer-size
+                      ground-level-threshold)
+                     (catch Exception e
+                       (log/error
+                        e "Error adding lidar data to"
+                        (dissoc feature ::geoio/geometry))
+                       {}))
 
-                       feature)))))
+                   feature)
+
+                  ;; pass points through
+                  feature)))))
          shapes index)
         
         ;; do nothing
