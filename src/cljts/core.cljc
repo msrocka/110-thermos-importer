@@ -297,18 +297,19 @@
          to-fixed #(.format df %)
          ]
      (defn ghash [^Geometry geometry]
-       (.reset md5)
-       (.update md5 (.getBytes (.toLowerCase (.getGeometryType geometry))
-                               java.nio.charset.StandardCharsets/UTF_8))
+       (locking md5
+         (.reset md5)
+         (.update md5 (.getBytes (.toLowerCase (.getGeometryType geometry))
+                                 java.nio.charset.StandardCharsets/UTF_8))
 
-       (doseq [^Coordinate c (.getCoordinates geometry)]
-         (.update md5 (.getBytes (to-fixed (.-x c)) java.nio.charset.StandardCharsets/UTF_8))
-         (.update md5 (.getBytes (to-fixed (.-y c)) java.nio.charset.StandardCharsets/UTF_8))
-         )
-       ;; Throw away some bytes. This should give us 16 * 6 bits = 96
-       ;; collision probability for 60 million objects of around
-       ;; 2e-14 which is probably good enough.
-       (.substring (.encodeToString base64 (.digest md5)) 0 16)))
+         (doseq [^Coordinate c (.getCoordinates geometry)]
+           (.update md5 (.getBytes (to-fixed (.-x c)) java.nio.charset.StandardCharsets/UTF_8))
+           (.update md5 (.getBytes (to-fixed (.-y c)) java.nio.charset.StandardCharsets/UTF_8))
+           )
+         ;; Throw away some bytes. This should give us 16 * 6 bits = 96
+         ;; collision probability for 60 million objects of around
+         ;; 2e-14 which is probably good enough.
+         (.substring (.encodeToString base64 (.digest md5)) 0 16))))
 
    :cljs
    (let [md5 (goog.crypt.Md5.)]
