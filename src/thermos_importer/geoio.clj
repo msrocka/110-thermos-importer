@@ -9,7 +9,8 @@
             [clojure.data.json :as json])
   (:import  [java.security MessageDigest]
             [java.util Base64 Base64$Encoder]
-            [org.locationtech.jts.geom Geometry Coordinate]
+            [org.locationtech.jts.geom Geometry Coordinate PrecisionModel]
+            [org.locationtech.jts.precision GeometryPrecisionReducer]
             [org.geotools.geometry.jts Geometries JTS]
             [org.geotools.geojson.feature FeatureJSON]
             [org.geotools.geojson.geom GeometryJSON]
@@ -104,6 +105,22 @@
     {::features (map transform (::features features))
      ::crs to-crs}))
 
+(defn set-precision [features precision]
+  (if precision
+    (let [precision-model
+          (cond
+            (= precision :float) (PrecisionModel.)
+            (= precision :single-float) (PrecisionModel. PrecisionModel/FLOATING_SINGLE)
+            (number? precision) (PrecisionModel. (double precision))
+            :else (throw (ex-info "Invalid precision" {:precision precision})))
+          change-precision
+          (fn [f] (update-geometry f (GeometryPrecisionReducer/reduce
+                                      (::geometry f) precision-model)))]
+      (update features ::features
+              #(map change-precision %)))
+    
+    features))
+
 (defn- feature->map [^Feature feature key-transform]
   (update-geometry
    (feature-attributes feature key-transform)
@@ -192,12 +209,8 @@
        (->> (map (reprojector crs force-crs)))
        )}))
 
-
-
 (defn read-from-geojson [filename & {:keys [force-crs key-transform]
                                      :or {key-transform keyword}}]
-  
-  
   (let [io (FeatureJSON.)
         crs (or (try (.readCRS io filename)
                      (catch Exception e))
@@ -236,37 +249,40 @@
 
   plus: keywordized fields from the feature
   "
-  [filename & {:keys [force-crs key-transform]
+  [filename & {:keys [force-crs key-transform force-precision]
                :or {key-transform keyword}}]
 
   (let [filename (io/as-file filename)
         store (FileDataStoreFinder/getDataStore filename)]
-    (cond
-      store
-      (try
-        (read-from-store store :force-crs force-crs :key-transform key-transform)
-        (finally (.dispose store)))
+    (->
+     (cond
+       store
+       (try
+         (read-from-store store :force-crs force-crs :key-transform key-transform)
+         (finally (.dispose store)))
 
-      (or (has-extension filename "gpkg")
-          (has-extension filename "geopackage"))
-      (let [store (DataStoreFinder/getDataStore {"dbtype" "geopkg"
-                                                 "database" (.getCanonicalPath filename)})]
-        (try
-          (read-from-store store :force-crs force-crs :key-transform key-transform)
-          (finally (.dispose store))))
-      
-      
-      (or (has-extension filename "json")
-          (has-extension filename "geojson"))
-      (with-open [r (io/reader filename)]
-        (read-from-geojson-2 r
-                             :force-crs force-crs
-                             :key-transform key-transform
-                             :homogenise-keys true))
+       (or (has-extension filename "gpkg")
+           (has-extension filename "geopackage"))
+       (let [store (DataStoreFinder/getDataStore {"dbtype" "geopkg"
+                                                  "database" (.getCanonicalPath filename)})]
+         (try
+           (read-from-store store :force-crs force-crs :key-transform key-transform)
+           (finally (.dispose store))))
+       
+       
+       (or (has-extension filename "json")
+           (has-extension filename "geojson"))
+       (with-open [r (io/reader filename)]
+         (read-from-geojson-2 r
+                              :force-crs force-crs
+                              :key-transform key-transform
+                              :homogenise-keys true))
 
-      :otherwise
-      (throw (Exception. (str "Unable to read features from " filename)))
-      )))
+       :otherwise
+       (throw (Exception. (str "Unable to read features from " filename)))
+       )
+     (set-precision force-precision)
+     )))
 
 (def can-read?
   (comp
