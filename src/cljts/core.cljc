@@ -259,14 +259,19 @@
 (defn valid? [^Geometry a]
   (and a (.isValid a)))
 
-(defn number-of-parts [geom]
+(defn number-of-parts [^Geometry geom]
   (.getNumGeometries geom))
 
-(defn nth-part [geom n]
+(defn nth-part [^Geometry geom n]
   (.getGeometryN geom n))
 
 (defn is-multi? [geom]
   (#{:multi-point :multi-line-string :multi-polygon} (geometry-type geom)))
+
+(defn is-empty? [^Geometry geom] (.isEmpty geom))
+
+(defn useful? [^Geometry geom]
+  (and (valid? geom) (not (is-empty? geom))))
 
 (defn parts [geometry]
   (if (is-multi? geometry)
@@ -283,8 +288,7 @@
     (nth-part geom 0)
     geom))
 
-(defn coordinates [geom]
-  (.getCoordinates geom))
+(defn coordinates [^Geometry geom] (.getCoordinates geom))
 
 #?(:clj
    (let [^MessageDigest md5 (MessageDigest/getInstance "MD5")
