@@ -46,9 +46,12 @@
 (defn feature->rect ^Rectangle [feature]
   (let [^Geometry geometry (::geoio/geometry feature)
         ^Envelope bbox (.getEnvelopeInternal geometry)]
-    (Geometries/rectangle
-     (.getMinX bbox) (.getMinY bbox)
-     (.getMaxX bbox) (.getMaxY bbox))))
+    (try
+      (Geometries/rectangle
+       (.getMinX bbox) (.getMinY bbox)
+       (.getMaxX bbox) (.getMaxY bbox))
+      (catch Exception ex
+        (throw (ex-info "Feature had invalid bounds" {:feature feature :bbox bbox}))))))
 
 (let [delete
       (fn [^RTree index feature]
