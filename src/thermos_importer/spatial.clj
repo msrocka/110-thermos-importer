@@ -150,7 +150,7 @@
 
 (defn extent 
   "Returns a bounding box that encloses a set of geometries"
-  [features crs]
+  ^Envelope2D [features crs]
   (let [crs (geoio/decode-crs crs)]
     (reduce (fn ^Envelope2D [^Envelope2D box feat]
               (.include box (JTS/getEnvelope2D
