@@ -114,11 +114,19 @@
             (number? precision) (PrecisionModel. (double precision))
             :else (throw (ex-info "Invalid precision" {:precision precision})))
           change-precision
-          (fn [f] (update-geometry f (GeometryPrecisionReducer/reduce
-                                      (::geometry f) precision-model)))]
-      (update features ::features
-              #(map change-precision %)))
-    
+          (fn [f]
+            (let [f (update-geometry f (GeometryPrecisionReducer/reduce
+                                        (::geometry f) precision-model))]
+              (when-not (.isEmpty (::geometry f)) f)))]
+      (let [features'
+            (update features ::features
+                    #(keep change-precision %))
+            old-count (count (::features features))
+            new-count (count (::features features'))
+            ]
+        (when (< new-count old-count)
+          (log/warn (- old-count new-count) "features removed by precision reduction"))
+        features'))
     features))
 
 (defn- feature->map [^Feature feature key-transform]
@@ -249,40 +257,52 @@
 
   plus: keywordized fields from the feature
   "
-  [filename & {:keys [force-crs key-transform force-precision]
-               :or {key-transform keyword}}]
+  [filename & {:keys [force-crs key-transform force-precision
+                      remove-junk]
+               :or {key-transform keyword remove-junk true}}]
 
   (let [filename (io/as-file filename)
         store (FileDataStoreFinder/getDataStore filename)]
-    (->
-     (cond
-       store
-       (try
-         (read-from-store store :force-crs force-crs :key-transform key-transform)
-         (finally (.dispose store)))
+    (cond->
+        (cond
+          store
+          (try
+            (read-from-store store :force-crs force-crs :key-transform key-transform)
+            (finally (.dispose store)))
 
-       (or (has-extension filename "gpkg")
-           (has-extension filename "geopackage"))
-       (let [store (DataStoreFinder/getDataStore {"dbtype" "geopkg"
-                                                  "database" (.getCanonicalPath filename)})]
-         (try
-           (read-from-store store :force-crs force-crs :key-transform key-transform)
-           (finally (.dispose store))))
-       
-       
-       (or (has-extension filename "json")
-           (has-extension filename "geojson"))
-       (with-open [r (io/reader filename)]
-         (read-from-geojson-2 r
-                              :force-crs force-crs
-                              :key-transform key-transform
-                              :homogenise-keys true))
+          (or (has-extension filename "gpkg")
+              (has-extension filename "geopackage"))
+          (let [store (DataStoreFinder/getDataStore {"dbtype" "geopkg"
+                                                     "database" (.getCanonicalPath filename)})]
+            (try
+              (read-from-store store :force-crs force-crs :key-transform key-transform)
+              (finally (.dispose store))))
+          
+          
+          (or (has-extension filename "json")
+              (has-extension filename "geojson"))
+          (with-open [r (io/reader filename)]
+            (read-from-geojson-2 r
+                                 :force-crs force-crs
+                                 :key-transform key-transform
+                                 :homogenise-keys true))
 
-       :otherwise
-       (throw (Exception. (str "Unable to read features from " filename)))
-       )
-     (set-precision force-precision)
-     )))
+          :otherwise
+          (throw (Exception. (str "Unable to read features from " filename))))
+      
+      force-precision
+      (set-precision force-precision)
+      
+      remove-junk
+      (update ::features
+              (fn [features]
+                (let [features' (filter (comp jts/useful? ::geometry) features)
+                      old-count (count features)
+                      new-count (count features')
+                      ]
+                  (when (< new-count old-count)
+                    (log/warn (- old-count new-count) "features removed due to invalid geometry or emptiness"))
+                  features'))))))
 
 (def can-read?
   (comp

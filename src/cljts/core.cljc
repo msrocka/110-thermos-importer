@@ -259,14 +259,19 @@
 (defn valid? [^Geometry a]
   (and a (.isValid a)))
 
-(defn number-of-parts [geom]
+(defn number-of-parts [^Geometry geom]
   (.getNumGeometries geom))
 
-(defn nth-part [geom n]
+(defn nth-part [^Geometry geom n]
   (.getGeometryN geom n))
 
 (defn is-multi? [geom]
   (#{:multi-point :multi-line-string :multi-polygon} (geometry-type geom)))
+
+(defn is-empty? [^Geometry geom] (.isEmpty geom))
+
+(defn useful? [^Geometry geom]
+  (and (valid? geom) (not (is-empty? geom))))
 
 (defn parts [geometry]
   (if (is-multi? geometry)
@@ -283,8 +288,7 @@
     (nth-part geom 0)
     geom))
 
-(defn coordinates [geom]
-  (.getCoordinates geom))
+(defn coordinates [^Geometry geom] (.getCoordinates geom))
 
 #?(:clj
    (let [^MessageDigest md5 (MessageDigest/getInstance "MD5")
@@ -293,18 +297,19 @@
          to-fixed #(.format df %)
          ]
      (defn ghash [^Geometry geometry]
-       (.reset md5)
-       (.update md5 (.getBytes (.toLowerCase (.getGeometryType geometry))
-                               java.nio.charset.StandardCharsets/UTF_8))
+       (locking md5
+         (.reset md5)
+         (.update md5 (.getBytes (.toLowerCase (.getGeometryType geometry))
+                                 java.nio.charset.StandardCharsets/UTF_8))
 
-       (doseq [^Coordinate c (.getCoordinates geometry)]
-         (.update md5 (.getBytes (to-fixed (.-x c)) java.nio.charset.StandardCharsets/UTF_8))
-         (.update md5 (.getBytes (to-fixed (.-y c)) java.nio.charset.StandardCharsets/UTF_8))
-         )
-       ;; Throw away some bytes. This should give us 16 * 6 bits = 96
-       ;; collision probability for 60 million objects of around
-       ;; 2e-14 which is probably good enough.
-       (.substring (.encodeToString base64 (.digest md5)) 0 16)))
+         (doseq [^Coordinate c (.getCoordinates geometry)]
+           (.update md5 (.getBytes (to-fixed (.-x c)) java.nio.charset.StandardCharsets/UTF_8))
+           (.update md5 (.getBytes (to-fixed (.-y c)) java.nio.charset.StandardCharsets/UTF_8))
+           )
+         ;; Throw away some bytes. This should give us 16 * 6 bits = 96
+         ;; collision probability for 60 million objects of around
+         ;; 2e-14 which is probably good enough.
+         (.substring (.encodeToString base64 (.digest md5)) 0 16))))
 
    :cljs
    (let [md5 (goog.crypt.Md5.)]
