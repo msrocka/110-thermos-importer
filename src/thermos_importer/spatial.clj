@@ -406,7 +406,7 @@
                                               :connector true
                                               :subtype "Connector"
                                               }
-                                           source-field (assoc source-field (get source-field p)))
+                                           source-field (assoc source-field (get p source-field)))
                                          [split-point (.getCoordinate on-b)])]
                 ;; we need to add the connector to the path index
                 (index-insert! path-index connector)
