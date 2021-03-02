@@ -5,9 +5,10 @@
             GeometryFactory PrecisionModel
             Coordinate
             Geometry Polygon Point LineString MultiLineString
-            LinearRing
+            LinearRing GeometryCollection
             MultiPoint MultiPolygon]
            [org.locationtech.jts.operation.distance DistanceOp GeometryLocation]
+           [org.locationtech.jts.algorithm ConvexHull]
            [java.security MessageDigest]
            [java.util Base64 Base64$Encoder]
            [org.geotools.geojson.geom GeometryJSON]))
@@ -18,13 +19,16 @@
 
 #?(:cljs
    (do (def Geometry jsts/geom.Geometry)
+       (def GeometryCollection jsts/geom.GeometryCollection)
        (def Coordinate jsts/geom.Coordinate)
        (def Point jsts/geom.Point)
        (def Polygon jsts/geom.Polygon)
        (def LineString jsts/geom.LineString)
        (def MultiPolygon jsts/geom.MultiPolygon)
        (def MultiLineString jsts/geom.MultiLineString)
-       (def LinearRing jsts/geom.LinearRing)))
+       (def LinearRing jsts/geom.LinearRing)
+       (def ConvexHull jsts/algorithm.ConvexHull)
+       ))
 
 (def ^:dynamic *geometry-factory*
   #?(:clj
@@ -172,6 +176,11 @@
   
   ([^double x ^double y]
    (create-point (create-coordinate x y))))
+
+(defn create-geometry-collection [gs]
+  (.createGeometryCollection
+   *geometry-factory*
+   (into-array Geometry gs)))
 
 (defn as-coordinate [x]
   (cond (instance? Coordinate x) x
@@ -594,3 +603,16 @@
         (geodesic-distance c1 c2))
       
       (.distance op))))
+
+(defn centroid [^Geometry g] (.getCentroid g))
+
+(defn convex-hull ^Geometry [gs]
+  (cond
+    (instance? Geometry gs)
+    (.getConvexHull (ConvexHull. gs))
+        
+    (and (seq gs) (every? #(instance? Geometry %) gs))
+    (convex-hull (create-geometry-collection gs))
+
+    :else (throw (IllegalArgumentException.
+                  "convex-hull accepts a geometry or seq of geometries."))))
