@@ -260,7 +260,7 @@
   [filename & {:keys [force-crs key-transform force-precision
                       remove-junk]
                :or {key-transform keyword remove-junk true}}]
-
+  {:pre [(.exists (io/as-file filename))]}
   (let [filename (io/as-file filename)
         store (FileDataStoreFinder/getDataStore filename)]
     (cond->
