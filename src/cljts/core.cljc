@@ -177,11 +177,6 @@
   ([^double x ^double y]
    (create-point (create-coordinate x y))))
 
-(defn create-geometry-collection [gs]
-  (.createGeometryCollection
-   *geometry-factory*
-   (into-array Geometry gs)))
-
 (defn as-coordinate [x]
   (cond (instance? Coordinate x) x
         (vector? x) (create-coordinate (first x) (second x))))
@@ -614,5 +609,5 @@
     (and (seq gs) (every? #(instance? Geometry %) gs))
     (convex-hull (create-geometry-collection gs))
 
-    :else (throw (IllegalArgumentException.
-                  "convex-hull accepts a geometry or seq of geometries."))))
+    :else (throw (ex-info "convex-hull accepts a geometry or seq of geometries."
+                          {:input gs}))))
