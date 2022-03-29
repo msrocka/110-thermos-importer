@@ -100,36 +100,6 @@
          (when (and z (not (no-data z)))
            [x y z]))))))
 
-(defn- summarise
-  "Approximately summarise the building from this set of x/y/z values."
-  [shape coords ground-level-threshold]
-  (if (not (empty? coords))
-    (let [perimeter (.getLength shape)
-
-          heights (map last coords)
-          heights (filter #(> % ground-level-threshold) heights)
-          
-          ground (if (seq heights)
-                   (apply min heights)
-                   0)
-          
-          heights (map #(- % ground) heights)
-
-          heights (filter #(> % 0.5) heights)
-          mean-height (if (empty? heights)
-                        0
-                        (/ (apply + heights) (count heights)))
-
-          footprint (.getArea shape)
-          ]
-      {::perimeter perimeter
-       ::footprint footprint
-       ::ground-height ground
-       ::height mean-height
-       ::num-samples (count heights)
-       })
-    {::num-samples 0}))
-
 (defn- grid-over
   "Make a seq of coordinates covering the SHAPE with a buffer of 1m
 
@@ -161,146 +131,6 @@
                           (Coordinate. x y)))]
       [x y])))
 
-(defn shape->dimensions
-  "Given an rtree for a set of rasters, and a shape which is a JTS geometry.
-
-  Presumes the shape has been projected into the CRS for all the rasters in the rtree.
-
-  ::surface-area
-  ::volume
-  ::floor-area"
-  [tree shape buffer-size ground-level-threshold]
-
-  (let [rect    (util/geom->rect shape)
-        rasters (find-rasters tree rect)
-        grid    (grid-over shape buffer-size)
-        coords  (mapcat #(sample-coords % grid) rasters)]
-    (summarise shape coords ground-level-threshold)))
-
-(defn estimate-party-walls [feature index]
-  (try
-    (let [geom (::geoio/geometry feature)
-          rect (util/geom->rect geom)
-          neighbours (util/search-rtree index rect)
-          perimeter (.getLength geom)
-
-          boundary (.getBoundary geom)
-
-          inter-bounds (for [n neighbours :when (not= n feature)]
-                         (let [n-boundary (.getBoundary (::geoio/geometry n))]
-                           (LineStringExtracter/getGeometry
-                            (.intersection boundary n-boundary))))
-          
-          ]
-      (if (seq inter-bounds)
-        (let [party-bounds (reduce
-                            (fn [a b] (.union a b))
-                            inter-bounds)
-              party-perimeter (.getLength party-bounds)
-
-              party-perimeter-proportion (/ party-perimeter perimeter)]
-          (assoc feature ::shared-perimeter party-perimeter-proportion))
-        
-        (assoc feature ::shared-perimeter 0)))
-    (catch Exception e
-      (log/error e
-                 "Error computing party walls for %s: %s\n"
-                 (dissoc feature ::geoio/geometry)
-                 (.getMessage e))
-      (assoc feature ::shared-perimeter 0))))
-
-(defn- derive-2d-fields [feature]
-  (let [{shared-perimeter ::shared-perimeter
-         perimeter ::perimeter
-         footprint ::footprint} feature
-
-        perimeter (or perimeter 0)
-        footprint (or footprint 0.1)
-
-        shared-perimeter (or shared-perimeter 0)
-
-        ;; in meteres
-        shared-perimeter-m (* shared-perimeter perimeter)
-
-        perimeter-per-footprint (if (zero? perimeter)
-                                  0 (/ perimeter footprint))
-        
-        ]
-    (assoc feature
-           ::shared-perimeter-m shared-perimeter-m
-           ::perimeter-per-footprint perimeter-per-footprint)))
-
-(defn- derive-3d-fields [feature]
-  (try
-    (let [{shared-perimeter ::shared-perimeter
-           perimeter ::perimeter
-           height ::height
-           floor-area ::floor-area
-           footprint ::footprint} feature
-
-          wall-area (* perimeter height)
-
-          party-wall-area (* shared-perimeter wall-area)
-          external-wall-area (- wall-area party-wall-area)
-          external-surface-area (+ external-wall-area (* 2 footprint))
-          total-surface-area (+ wall-area (* 2 footprint))
-
-          volume (* footprint height)
-
-          ext-surface-proportion (/ external-surface-area total-surface-area)
-          ext-surface-per-volume (/ external-surface-area volume)
-          
-          tot-surface-per-volume (/ total-surface-area volume)
-          ]
-      (assoc feature
-             ::wall-area wall-area
-             ::party-wall-area party-wall-area
-             ::external-wall-area external-wall-area
-             ::external-surface-area external-surface-area
-             ::total-surface-area total-surface-area
-             ::volume volume
-             ::ext-surface-proportion ext-surface-proportion
-             ::ext-surface-per-volume ext-surface-per-volume
-             ::tot-surface-per-volume tot-surface-per-volume))
-
-    (catch ArithmeticException e
-      (log/error e "deriving-3d-fields" (pr-str (dissoc feature ::geoio/geometry)))
-      (throw e))))
-
-(defn derive-more-fields [feature]
-  ;; take or compute storeys ceil(height / storey height)
-  ;; take or compute floor area (storeys * footprint)
-  ;; derive other fields
-  ;; if we have both storeys and floor area, wargarbl?
-
-  (let [height  (::height feature)
-        
-        storeys (max 1
-                     (or (::storeys feature)
-                         ;; should we round up here?
-                         (and height (int (Math/floor (/ height *storey-height*))))
-                         1))
-
-        height     (or height
-                       ;; this might be bogus - if we know the storeys and not height
-                       ;; we derive a height
-                       (and storeys (* storeys *storey-height*)))
-        
-        floor-area (or (::floor-area feature)
-                       (* (::footprint feature 0) (or storeys 1)))
-
-        shared-perimeter (::shared-perimeter feature)
-        ]
-    
-    (cond-> feature
-      storeys    (assoc ::storeys storeys)
-      height     (assoc ::height height)
-      floor-area (assoc ::floor-area floor-area)
-      shared-perimeter (derive-2d-fields)
-      (and shared-perimeter height (pos? height)
-           (pos? (::footprint feature 0)))
-      (derive-3d-fields))))
-
 (defn envelope-covers-tree [raster-crs raster-tree
                             shapes-crs ^org.locationtech.jts.geom.Envelope shapes-envelope]
 
@@ -320,86 +150,185 @@
       (dec (.getNumPoints geom)))
     0))
 
-(defn add-lidar-to-shapes
-  "Given a raster index from `rasters->index` and a `shapes`, which is a
-  geoio feature thingy i.e. a map with ::geoio/crs
-  and ::geoio/features in it
+(defn estimate-height [tree shape
+                       buffer-size ground-level-threshold]
+  (let [rect    (util/geom->rect shape)
+        rasters (find-rasters tree rect)
+        grid    (grid-over shape buffer-size)
+        coords  (mapcat #(sample-coords % grid) rasters)]
+    (if (empty? coords)
+      {::num-samples 0}
+      (let [heights (map last coords)
+            heights (filter #(> % ground-level-threshold) heights)
+            
+            ground (if (seq heights)
+                     (apply min heights)
+                     0)
+            
+            heights (map #(- % ground) heights)
 
-  return an updated `shapes`, in which the features have
-  got ::lidar/surface-area etc. from shape->dimensions."
+            heights (filter #(> % 0.5) heights)
+            mean-height (if (empty? heights)
+                          0
+                          (/ (apply + heights) (count heights)))
+            ]
+        {::num-samples (count coords)
+         ::height mean-height
+         ::ground-height ground}))))
+
+(defn add-height-from-lidar
+  "Update shapes to add ::height to any building which intersects the LIDAR"
   [shapes index & {:keys [buffer-size ground-level-threshold]
-                   :or {buffer-size 1.5
-                        ground-level-threshold -5}}]
+                   :or {buffer-size 1.5 ground-level-threshold -5}}]
 
-  (log/info (count (::geoio/features shapes)) "shapes to lidarize")
-  
   (let [shapes-crs (::geoio/crs shapes)
-        shapes-crs* (CRS/decode shapes-crs true)
-        
-        feature-index (util/index-features (::geoio/features shapes))
-        sensible-transform (spatial/sensible-projection
-                            :utm-zone
-                            shapes-crs (::geoio/geatures shapes))
-
-        shapes-box  (geoio/bounding-box shapes)
-        index       (filter (fn [[raster-crs raster-tree]]
-                              (envelope-covers-tree raster-crs raster-tree
-                                                    shapes-crs* shapes-box))
-                            index)
-        
-        add-footprint-and-perimeter (fn [feature]
-                                      (let [shape (::geoio/geometry feature)
-                                            shape (JTS/transform shape sensible-transform)]
-                                        (merge feature
-                                               {::num-samples 0
-                                                ::footprint (.getArea shape)
-                                                ::perimeter (.getLength shape)
-                                                ::corners   (count-corners shape)
-                                                })))
-        ]
-
-    (log/info (reduce + (map #(.size (second %)) index)) "tiles to match against")
-    
-    (as-> shapes shapes
-      (geoio/update-features shapes :estimate-party-walls estimate-party-walls feature-index)
-      (geoio/update-features shapes :footprint-and-perimeter add-footprint-and-perimeter)
-      ;; remove any polygonal shapes with zero footprint
-      (update shapes ::geoio/features #(filter (fn [f]
-                                                 (or
-                                                  (pos? (::footprint f))
-                                                  (not= :polygon (::geoio/type f))))
-                                               %))
-
-      (if index
-        ;; mangle shapes
-        (reduce
-         (fn [shapes [raster-crs raster-tree]]
-           (let [transform (CRS/findMathTransform shapes-crs* (CRS/decode raster-crs true))]
-             (geoio/update-features
-              shapes :intersect-with-lidar
-              (fn [feature]
-                (if (= :polygon (::geoio/type feature))
-                  (merge
-                   (try
-                     (shape->dimensions
-                      raster-tree
-                      (JTS/transform (::geoio/geometry feature) transform)
-                      
-                      buffer-size
-                      ground-level-threshold)
-                     (catch Exception e
-                       (log/error
-                        e "Error adding lidar data to"
-                        (dissoc feature ::geoio/geometry))
-                       {}))
-
-                   feature)
-
-                  ;; pass points through
-                  feature)))))
-         shapes index)
-        
-        ;; do nothing
-        shapes)
+        decoded-shapes-crs (CRS/decode shapes-crs true)
+        bounds (geoio/bounding-box shapes)
+        index  (filter (fn [[raster-crs raster-tree]]
+                         (envelope-covers-tree
+                          raster-crs raster-tree decoded-shapes-crs bounds))
+                       index)]
+    (if (empty? index)
+      shapes
       
-      (geoio/update-features shapes :derive-fields derive-more-fields))))
+      (reduce
+       (fn [shapes [raster-crs raster-tree]]
+         (let [T (CRS/findMathTransform
+                  decoded-shapes-crs
+                  (CRS/decode raster-crs true))]
+           (geoio/update-features
+            shapes :intersect-with-lidar
+            (fn [feature]
+              (cond-> feature
+                (not= :polygon (::geoio/type feature))
+                (merge {::num-samples 0})
+                
+                (= :polygon (::geoio/type feature))
+                (merge
+                 (estimate-height
+                  raster-tree
+                  (JTS/transform
+                   (::geoio/geometry feature) T)
+                  buffer-size
+                  ground-level-threshold)))
+              ))))
+       
+       shapes index))))
+
+(defmacro d0 [x y] `(let [x# ~x](if (zero? x#) 0 (/ x# ~y))))
+
+(defn add-other-attributes
+  [shapes & {:keys [reproject-with] :or {reproject-with identity}}]
+  (let [reprojected-geoms (into {} (for [s (::geoio/features shapes)]
+                                     [(::geoio/id s) (reproject-with (::geoio/geometry s))]))
+        reprojected-geoms (fn [s] (get reprojected-geoms (::geoio/id s)))
+        feature-index     (util/index-features (::geoio/features shapes) reprojected-geoms)]
+    (geoio/update-features
+     shapes :add-other-attributes
+     (fn [feature]
+       (let [geometry  (reprojected-geoms feature)
+             perimeter (.getLength geometry)
+             footprint (.getArea geometry)
+
+             ;; work out party wall area
+             party-perimeter-proportion
+             (try
+               (let [rect       (util/geom->rect   geometry)
+                     neighbours (util/search-rtree feature-index rect)
+                     boundary   (.getBoundary geometry)]
+                 (if-let [inter-bounds
+                          (seq
+                           (for [n neighbours :when (not= n feature)]
+                             (let [n-boundary (.getBoundary (reprojected-geoms n))]
+                               (LineStringExtracter/getGeometry
+                                (.intersection boundary n-boundary)))))]
+                   
+                   (let [party-bounds    (reduce (fn u [a b] (.union a b)) inter-bounds)
+                         party-perimeter (.getLength party-bounds)]
+                     (d0 party-perimeter perimeter))
+                   0))
+               (catch Exception e (log/warn e "Error computing party walls")
+                      0))
+
+             [height height-source]
+             (cond
+               (:height feature)
+               [(:height feature) :given]
+               
+               (::height feature)
+               [(::height feature) :lidar]
+
+               (:fallback-height feature)
+               [(:fallback-height feature) :fallback]
+               
+               (:storeys feature)
+               [(* *storey-height* (:storeys feature)) :storeys]
+
+               :else
+               [*storey-height* :default])
+
+             storeys
+             (max 1
+                  (or (:storeys feature)
+                      (and height (int (Math/floor (/ height *storey-height*))))
+                      1))
+
+             floor-area (or (:floor-area feature)
+                            (* footprint storeys))
+
+             wall-area             (* perimeter height)
+             party-wall-area       (* party-perimeter-proportion wall-area)
+             external-wall-area    (- wall-area party-wall-area)
+             external-surface-area (+ external-wall-area footprint footprint)
+             total-surface-area    (+ wall-area footprint footprint)
+             volume                (* footprint height)
+             
+             ext-surface-proportion (d0 external-surface-area total-surface-area)
+             ext-surface-per-volume (d0 external-surface-area volume)
+             
+             tot-surface-per-volume (d0 total-surface-area volume)
+             ]
+         (assoc feature
+                ::perimeter-per-footprint (d0 perimeter footprint)
+
+                ::footprint footprint
+                ::perimeter perimeter
+                ::corners   (count-corners geometry)
+
+                ::shared-perimeter party-perimeter-proportion
+                ::shared-perimeter-m (* party-perimeter-proportion perimeter)
+
+                ::height  height
+                ::height-source height-source
+                ::storeys storeys
+                
+                ::floor-area floor-area
+                ::wall-area wall-area
+                ::party-wall-area party-wall-area
+                ::external-wall-area external-wall-area
+                ::total-surface-area total-surface-area
+                ::volume volume
+                ::ext-surface-proportion ext-surface-proportion
+                ::ext-surface-per-volume ext-surface-per-volume
+                ::tot-surface-per-volume tot-surface-per-volume
+                ))))))
+
+
+(defn add-lidar-to-shapes
+  [shapes index &
+   {:keys [buffer-size ground-level-threshold]
+    :or {buffer-size 1.5
+         ground-level-threshold -5}}]
+
+  (let [shapes (add-height-from-lidar shapes index
+                                      :buffer-size buffer-size
+                                      :ground-level-threshold ground-level-threshold)
+        sensible-transform (spatial/sensible-projection
+                            :utm-zone (::geoio/crs shapes) (::geoio/features shapes))
+        ]
+    (add-other-attributes
+     shapes
+     :reproject-with #(JTS/transform % sensible-transform))))
+
+;; TODO this used to filter out zero-area polygons
+;; not sure why or if it still should

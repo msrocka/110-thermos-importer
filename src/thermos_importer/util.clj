@@ -37,14 +37,17 @@
 
 (declare index-features search-rtree geom->rect)
 
-(defn index-features [features]
-  (reduce
-   (fn [^RTree tree feature]
-     (let [box (geom->rect (:thermos-importer.geoio/geometry feature))]
-       (.add tree feature box)))
-   
-   (RTree/create)
-   features))
+(defn index-features
+  ([features]
+   (index-features features :thermos-importer.geoio/geometry))
+  ([features geometry]
+   (reduce
+    (fn [^RTree tree feature]
+      (let [box (geom->rect (geometry feature))]
+        (.add tree feature box)))
+    
+    (RTree/create)
+    features)))
 
 (defn search-rtree [^RTree tree ^Rectangle rect]
   (for [entry (.. tree

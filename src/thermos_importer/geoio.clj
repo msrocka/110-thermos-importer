@@ -431,7 +431,9 @@
 
 (defn write-to
   "Store some geospatial data into a form that we like."
-  [data filename & {:keys [fields chunk-size]}]
+  [data filename & {:keys [fields chunk-size table-name geometry-column]
+                    :or   {table-name "features"
+                           geometry-column "geometry"}}]
 
   (let [filename (.getPath (io/file filename))
 
@@ -442,11 +444,6 @@
 
         fields (or fields (infer-fields epsg data))
         
-        geo-writer (let [x (FeatureJSON. (GeometryJSON. 8))]
-                     (.setEncodeNullValues x true)
-                     (.setEncodeFeatureCollectionCRS x true)
-                     x)
-
         ;; we need a type descriptor for geotools to be happy:
         type
         (DataUtilities/createType
@@ -483,8 +480,8 @@
             (let [feature-entry (FeatureEntry.)
                   out (GeoPackage. (io/file filename))]
               (try
-                (.setTableName feature-entry "features")
-                (.setGeometryColumn feature-entry "geometry")
+                (.setTableName feature-entry table-name)
+                (.setGeometryColumn feature-entry geometry-column)
                 (.setGeometryType feature-entry Geometries/GEOMETRY)
                 (.add out feature-entry (make-feature-collection data))
                 (finally (.close out)))))
@@ -494,7 +491,10 @@
           (fn [filename data]
             (with-open [writer (io/writer filename)]
               (.writeFeatureCollection
-               geo-writer
+               (let [x (FeatureJSON. (GeometryJSON. 8))]
+                     (.setEncodeNullValues x true)
+                     (.setEncodeFeatureCollectionCRS x true)
+                     x)
                (make-feature-collection data)
                writer))))
         ]
