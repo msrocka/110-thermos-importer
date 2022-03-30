@@ -17,13 +17,14 @@
             SegmentString MCIndexNoder NodedSegmentString IntersectionAdder
             SegmentStringDissolver]
            [org.locationtech.jts.algorithm RobustLineIntersector]
-
            [org.geotools.geometry.jts JTS]
            [org.geotools.referencing CRS]
            [org.opengis.referencing.operation MathTransform]
-           
+           [org.geotools.referencing.operation.transform IdentityTransform]
            [org.geotools.geometry Envelope2D]
            ))
+
+
 
 (def SMALL_DISTANCE 0.1)
 (def NEARNESS 500) ;; metres, since we go into our equal-area projection
@@ -172,29 +173,43 @@
         {:lat (.getMedian bounding-box 1)
          :lng (.getMedian bounding-box 0)}))
 
+(defn is-in-metres? [^org.opengis.referencing.crs.CoordinateReferenceSystem crs]
+  (and crs
+       (let [crs (.getCoordinateSystem crs)
+             naxes (.getDimension crs)
+             units (for [i (range naxes)] (.getUnit (.getAxis crs i)))]
+         (every? #(= tec.uom.se.unit.Units/METRE %) units))))
+
 (defn sensible-projection
   "Create a projection of a certain type for the given features in their input CRS"
   ^MathTransform [type input-crs features]
-  (let [input-crs (CRS/decode input-crs true)
-        ^Envelope2D bounding-box (extent features input-crs)
+  
+  (let [input-crs (CRS/decode input-crs true)]
+    (if (is-in-metres? input-crs)
+      (-> input-crs
+          (.getCoordinateSystem)
+          (.getDimension)
+          (IdentityTransform/create))
+      
+      (let [^Envelope2D bounding-box (extent features input-crs)
 
-        lat-centre (.getMedian bounding-box 1)
-        lon-centre (.getMedian bounding-box 0)
+            lat-centre (.getMedian bounding-box 1)
+            lon-centre (.getMedian bounding-box 0)
 
-        from-wkt (fn [wkt] (CRS/findMathTransform input-crs (CRS/parseWKT wkt) true))
-        from-epsg (fn [epsg]
-                    (CRS/findMathTransform input-crs
-                                           (CRS/decode (str "EPSG:" epsg) true)
-                                           true))
-        ]
+            from-wkt (fn [wkt] (CRS/findMathTransform input-crs (CRS/parseWKT wkt) true))
+            from-epsg (fn [epsg]
+                        (CRS/findMathTransform input-crs
+                                               (CRS/decode (str "EPSG:" epsg) true)
+                                               true))
+            ]
 
-    (case type
-      :lambert-conformal-conic
-      (let [parallel-1 (.getMinimum bounding-box 1)
-            parallel-2 (.getMaximum bounding-box 1)]
-        
-        (from-wkt
-         (format "PROJCS[\"Lambert_Conformal_Conic\",
+        (case type
+          :lambert-conformal-conic
+          (let [parallel-1 (.getMinimum bounding-box 1)
+                parallel-2 (.getMaximum bounding-box 1)]
+            
+            (from-wkt
+             (format "PROJCS[\"Lambert_Conformal_Conic\",
     GEOGCS[\"GCS_European_1950\",
         DATUM[\"European_Datum_1950\",
             SPHEROID[\"International_1924\",6378388,297]],
@@ -208,15 +223,15 @@
     PARAMETER[\"Standard_Parallel_2\",%f],
     PARAMETER[\"latitude_of_center\",%f],
     UNIT[\"Meter\",1]]"
-                 lon-centre
-                 parallel-1
-                 parallel-2
-                 lat-centre
-                 )))
-      :azimuthal-equidistant
-      
-      (from-wkt
-       (format "PROJCS[\"unnamed\",
+                     lon-centre
+                     parallel-1
+                     parallel-2
+                     lat-centre
+                     )))
+          :azimuthal-equidistant
+          
+          (from-wkt
+           (format "PROJCS[\"unnamed\",
     GEOGCS[\"WGS 84\",
         DATUM[\"unknown\",
             SPHEROID[\"WGS84\",6378137,298.257223563]],
@@ -228,39 +243,39 @@
     PARAMETER[\"false_easting\",0],
     PARAMETER[\"false_northing\",0],
     UNIT[\"Meter\", 1.0]]"
-               lat-centre
-               lon-centre))
+                   lat-centre
+                   lon-centre))
 
-      ;; :oblique-mercator
-      ;; (let [latitude-origin (.getMedian bounding-box 1)
-      ;;         longitude-origin (.getMedian bounding-box 0)]
-      ;;     (format
-      ;;      "PROJCS[\"OBLIQUE MERCATOR\",
-      ;; GEOGCS[\"WGS 84\", 
-      ;;        DATUM[\"WGS_1984\", SPHEROID[\"WGS 84\",6378137,298.257223563]],
-      ;;        PRIMEM[\"Greenwich\",0],
-      ;;        UNIT[\"degree\",0.01745329251994328]],
-      ;; PROJECTION[\"Hotine_Oblique_Mercator\"],
-      ;; PARAMETER[\"latitude_of_center\", %f],
-      ;; PARAMETER[\"longitude_of_center\", %f],
-      ;; PARAMETER[\"azimuth\",89.999999],
-      ;; PARAMETER[\"rectified_grid_angle\",89.999999],
-      ;; PARAMETER[\"scale_factor\",1],
-      ;; PARAMETER[\"false_easting\",0],
-      ;; PARAMETER[\"false_northing\",0],
-      ;; UNIT[\"Meter\",1]]"
-      
-      ;;             latitude-origin
-      ;;             longitude-origin
-      ;;             ))
+          ;; :oblique-mercator
+          ;; (let [latitude-origin (.getMedian bounding-box 1)
+          ;;         longitude-origin (.getMedian bounding-box 0)]
+          ;;     (format
+          ;;      "PROJCS[\"OBLIQUE MERCATOR\",
+          ;; GEOGCS[\"WGS 84\", 
+          ;;        DATUM[\"WGS_1984\", SPHEROID[\"WGS 84\",6378137,298.257223563]],
+          ;;        PRIMEM[\"Greenwich\",0],
+          ;;        UNIT[\"degree\",0.01745329251994328]],
+          ;; PROJECTION[\"Hotine_Oblique_Mercator\"],
+          ;; PARAMETER[\"latitude_of_center\", %f],
+          ;; PARAMETER[\"longitude_of_center\", %f],
+          ;; PARAMETER[\"azimuth\",89.999999],
+          ;; PARAMETER[\"rectified_grid_angle\",89.999999],
+          ;; PARAMETER[\"scale_factor\",1],
+          ;; PARAMETER[\"false_easting\",0],
+          ;; PARAMETER[\"false_northing\",0],
+          ;; UNIT[\"Meter\",1]]"
+          
+          ;;             latitude-origin
+          ;;             longitude-origin
+          ;;             ))
 
 
-      :utm-zone
-      (from-epsg (utm-zone-epsg-code lon-centre lat-centre))
-      
-      (throw (ex-info "Unknown type of projection"
-                      {:type type})))
-    ))
+          :utm-zone
+          (from-epsg (utm-zone-epsg-code lon-centre lat-centre))
+          
+          (throw (ex-info "Unknown type of projection"
+                          {:type type})))
+        ))))
 
 (defn reproject-1 [feature ^MathTransform transform]
   (let [^Geometry g (::geoio/geometry feature)
