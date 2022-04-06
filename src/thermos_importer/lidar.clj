@@ -256,12 +256,13 @@
                [(:height feature) :given]
 
                ;; detect out-of-date LiDAR height:
-               ;; * no fallback height given, and LiDAR height is less than 1.1m;
+               ;; * no fallback height given, and LiDAR height is <= 1.1m;
                ;; * fallback height is over 1m different from LiDAR height
-               ;;   and LiDAR height is less than 1.1m
+               ;;   and LiDAR height is <= 1.1m
                (let [lidar-height (::height feature)
                      fallback-height (:fallback-height feature)]
                  (and lidar-height
+                      (> lidar-height 0)
                       (cond
                         (nil? fallback-height)
                         (> lidar-height 1.1)
@@ -271,7 +272,7 @@
                             (<= (Math/abs (- fallback-height lidar-height)) 1)))))
                [(::height feature) :lidar]
 
-               (:fallback-height feature)
+               (and (:fallback-height feature) (> (:fallback-height feature) 0))
                [(:fallback-height feature) :fallback]
 
                (:storeys feature)
