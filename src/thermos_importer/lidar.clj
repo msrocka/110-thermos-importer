@@ -281,6 +281,10 @@
                :else
                [*storey-height* :default])
 
+             _ (assert (number? height)
+                       (format "height %s (%s) should be a number"
+                               height height-source))
+             
              storeys
              (max 1
                   (or (:storeys feature)

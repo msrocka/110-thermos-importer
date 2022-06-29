@@ -262,9 +262,10 @@
         result (try (http/post (or overpass-api default-overpass-api)
                                {:as :stream :body query-body})
                     (catch Exception e
-                      (throw (ex-info "Error querying overpass"
-                                      {:overpass-query query}
-                                      e))))]
+                      (let [ed (ex-data e)]
+                        (throw (ex-info (format "Error querying openstreetmap: %s %s" (:status ed) (:reason-phrase ed))
+                                        (assoc ed :overpass-query query)
+                                        e)))))]
     (-> result
         (:body)
         (xml/parse)
