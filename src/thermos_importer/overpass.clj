@@ -257,15 +257,41 @@
         osm-id (get-in osm [:attrs :id])]
     (assoc tags :osm-id osm-id)))
 
-(defn query-overpass [query & {:keys [overpass-api]}]
+(def ^:dynamic *overpass-retries* 4)
+(def ^:dynamic *overpass-retry-delay* 6000)
+
+(defn- sleep-and-retry [exception n]
+  (let [status (:status (ex-data exception) 0)]
+    (when (and (< n *overpass-retries*)
+               (<= 500 status 599))
+      (let [delay (* n n *overpass-retry-delay*)]
+        (log/warnf "Overpass query produced status %s on attempt %d - retry in %dms"
+                   status n delay)
+        (Thread/sleep delay))
+      true)))
+
+(defn query-overpass [query & {:keys [overpass-api retry?]
+                               :or {retry? sleep-and-retry}}]
   (let [query-body (str "data=" (URLEncoder/encode query "UTF-8"))
-        result (try (http/post (or overpass-api default-overpass-api)
-                               {:as :stream :body query-body})
-                    (catch Exception e
+        result
+        (loop [n 1]
+          (let [result
+                (try
+                  (http/post
+                   (or overpass-api default-overpass-api)
+                   {:as :stream :body query-body})
+                  (catch Exception e
+                    (if (sleep-and-retry e n)
+                      ::retry
                       (let [ed (ex-data e)]
-                        (throw (ex-info (format "Error querying openstreetmap: %s %s" (:status ed) (:reason-phrase ed))
-                                        (assoc ed :overpass-query query)
-                                        e)))))]
+                        (throw (ex-info (format "Error querying openstreetmap: %s %s"
+                                                (:status ed)
+                                                (:reason-phrase ed))
+                                        (assoc ed :overpass-query query) e))))))]
+            (if (= result ::retry)
+              (recur (inc n))
+              result)))
+        ]
     (-> result
         (:body)
         (xml/parse)
@@ -331,6 +357,5 @@
     (for [c candidates]
       (let [landuse (find-landuse c)]
         (assoc c :landuse landuse)))))
-
 
 
