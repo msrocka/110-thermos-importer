@@ -284,6 +284,9 @@
              _ (assert (number? height)
                        (format "height %s (%s) should be a number"
                                height height-source))
+
+             ;; no building may be less than a metre tall.
+             height (max height 1.0)
              
              storeys
              (max 1
