@@ -170,7 +170,7 @@
             heights (filter #(> % 0.5) heights)
             mean-height (if (empty? heights)
                           0
-                          (/ (apply + heights) (count heights)))
+                          (double (/ (apply + heights) (count heights))))
             ]
         {::num-samples (count coords)
          ::height mean-height
