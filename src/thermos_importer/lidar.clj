@@ -152,29 +152,33 @@
 
 (defn estimate-height [tree shape
                        buffer-size ground-level-threshold]
-  (let [rect    (util/geom->rect shape)
-        rasters (find-rasters tree rect)
-        grid    (grid-over shape buffer-size)
-        coords  (mapcat #(sample-coords % grid) rasters)]
-    (if (empty? coords)
-      {::num-samples 0}
-      (let [heights (map last coords)
-            heights (filter #(> % ground-level-threshold) heights)
-            
-            ground (if (seq heights)
-                     (apply min heights)
-                     0)
-            
-            heights (map #(- % ground) heights)
+  (try
+    (let [rect    (util/geom->rect shape)
+          rasters (find-rasters tree rect)
+          grid    (grid-over shape buffer-size)
+          coords  (mapcat #(sample-coords % grid) rasters)]
+      (if (empty? coords)
+        {::num-samples 0}
+        (let [heights (map last coords)
+              heights (filter #(> % ground-level-threshold) heights)
+              
+              ground (if (seq heights)
+                       (apply min heights)
+                       0)
+              
+              heights (map #(- % ground) heights)
 
-            heights (filter #(> % 0.5) heights)
-            mean-height (if (empty? heights)
-                          0
-                          (double (/ (apply + heights) (count heights))))
-            ]
-        {::num-samples (count coords)
-         ::height mean-height
-         ::ground-height ground}))))
+              heights (filter #(> % 0.5) heights)
+              mean-height (if (empty? heights)
+                            0
+                            (double (/ (apply + heights) (count heights))))
+              ]
+          {::num-samples (count coords)
+           ::height mean-height
+           ::ground-height ground})))
+    (catch Exception e
+      (log/warn e "Exception estimating height for feature")
+      {::num-samples 0})))
 
 (defn add-height-from-lidar
   "Update shapes to add ::height to any building which intersects the LIDAR"
