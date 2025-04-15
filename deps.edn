@@ -1,31 +1,31 @@
 {:paths ["src" "resources" "test"]
  :mvn/repos
- {"OSGeo" {:url "https://repo.osgeo.org/repository/release"},
-  "central" {:url "https://repo1.maven.org/maven2/"},
-  "clojars" {:url "https://clojars.org/repo"},
+ {"OSGeo"    {:url "https://repo.osgeo.org/repository/release"},
+  "central"  {:url "https://repo1.maven.org/maven2/"},
+  "clojars"  {:url "https://clojars.org/repo"},
   "geotools" {:url "https://download.osgeo.org/webdav/geotools/"}}
  :deps
- {org.clojure/clojure {:mvn/version"1.9.0"}
-  org.clojure/tools.cli {:mvn/version"0.3.5"}
-  org.clojure/tools.logging {:mvn/version "0.5.0"}
+ {org.clojure/clojure         {:mvn/version "1.9.0"}
+  org.clojure/tools.cli       {:mvn/version "0.3.5"}
+  org.clojure/tools.logging   {:mvn/version "0.5.0"}
 
-  digest {:mvn/version"1.4.6"}
-  
-  org.geotools/gt-data {:mvn/version"20.0"}
-  org.geotools/gt-shapefile {:mvn/version"20.0"}
-  org.geotools/gt-coverage {:mvn/version"20.0"}
-  org.geotools/gt-geotiff {:mvn/version"20.0"}
-  org.geotools/gt-geojson {:mvn/version"20.0"}
-  org.geotools/gt-geopkg {:mvn/version"20.0"}
-  org.geotools/gt-referencing {:mvn/version"20.0"} ; Coordinate transformations
-  org.geotools/gt-epsg-hsql {:mvn/version"20.0"} ; Coordinate system definitions
-  
-  com.github.davidmoten/rtree {:mvn/version"0.8.0.4"}
-  org.clojure/data.csv {:mvn/version"0.1.4"}
-  org.clojure/data.json {:mvn/version"0.2.6"}
-  clj-http {:mvn/version"3.9.0"}
-  
-  better-cond {:mvn/version"1.0.1"}
+  digest/digest               {:mvn/version "1.4.6"}
 
-  cljsjs/jsts {:mvn/version "1.6.0-0"}}}
+  org.geotools/gt-data        {:mvn/version "20.0"}
+  org.geotools/gt-shapefile   {:mvn/version "20.0"}
+  org.geotools/gt-coverage    {:mvn/version "20.0"}
+  org.geotools/gt-geotiff     {:mvn/version "20.0"}
+  org.geotools/gt-geojson     {:mvn/version "20.0"}
+  org.geotools/gt-geopkg      {:mvn/version "20.0"}
+  org.geotools/gt-referencing {:mvn/version "20.0"}         ;; Coordinate transformations
+  org.geotools/gt-epsg-hsql   {:mvn/version "20.0"}         ;; Coordinate system definitions
 
+  com.github.davidmoten/rtree {:mvn/version "0.8.0.4"}
+  org.clojure/data.csv        {:mvn/version "0.1.4"}
+  org.clojure/data.json       {:mvn/version "0.2.6"}
+  clj-http/clj-http           {:mvn/version "3.9.0"}
+
+  better-cond/better-cond     {:mvn/version "1.0.1"}
+
+  cljsjs/jsts                 {:mvn/version "1.6.0-0"}
+  com.greendelta/thermos-bh   {:mvn/version "0.0.1"}}}

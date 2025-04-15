@@ -10,24 +10,25 @@
             [clojure.tools.logging :as log]
             [cljts.core :as jts]
             [clojure.data.json :as json])
-  (:import  [java.security MessageDigest]
-            [java.util Base64 Base64$Encoder]
-            [org.locationtech.jts.geom Geometry Coordinate PrecisionModel]
-            [org.locationtech.jts.precision GeometryPrecisionReducer]
-            [org.geotools.geometry.jts Geometries JTS]
-            [org.geotools.geojson.feature FeatureJSON]
-            [org.geotools.geojson.geom GeometryJSON]
-            [org.geotools.geopkg GeoPackage FeatureEntry]
-            [org.geotools.data FileDataStoreFinder DataUtilities DataStoreFinder]
-            [org.geotools.data.simple SimpleFeatureCollection]
-            [org.geotools.data.collection ListFeatureCollection]
-            [org.geotools.feature.simple SimpleFeatureBuilder]
-            [org.geotools.feature FeatureIterator]
-            [org.opengis.feature Feature Property]
-            [org.opengis.feature.simple SimpleFeature]
-            [org.geotools.referencing CRS]
-            [org.geotools.data.shapefile ShapefileDataStore]
-            [java.nio.charset StandardCharsets]))
+  (:import (com.greendelta.bh.io ThermosCityReader ThermosFeature)
+           [java.security MessageDigest]
+           [java.util Base64 Base64$Encoder]
+           [org.locationtech.jts.geom Geometry Coordinate PrecisionModel]
+           [org.locationtech.jts.precision GeometryPrecisionReducer]
+           [org.geotools.geometry.jts Geometries JTS]
+           [org.geotools.geojson.feature FeatureJSON]
+           [org.geotools.geojson.geom GeometryJSON]
+           [org.geotools.geopkg GeoPackage FeatureEntry]
+           [org.geotools.data FileDataStoreFinder DataUtilities DataStoreFinder]
+           [org.geotools.data.simple SimpleFeatureCollection]
+           [org.geotools.data.collection ListFeatureCollection]
+           [org.geotools.feature.simple SimpleFeatureBuilder]
+           [org.geotools.feature FeatureIterator]
+           [org.opengis.feature Feature Property]
+           [org.opengis.feature.simple SimpleFeature]
+           [org.geotools.referencing CRS]
+           [org.geotools.data.shapefile ShapefileDataStore]
+           [java.nio.charset StandardCharsets]))
 
 (defn update-features [m tag f & args]
   (update m ::features
@@ -186,7 +187,7 @@
           (let [null-properties (into {} (for [k (set (mapcat keys features))] [k nil]))]
             (for [f features]
               (merge null-properties f))))
-        
+
         obj (json/read reader)
         fix-keys (fn [p]
                    (into {} (for [[k v] p] [(key-transform k) v])))
@@ -197,13 +198,13 @@
      (cond->
          (case (get obj "type")
            "FeatureCollection"
-           
+
            (vec
             (for [feature (get obj "features")]
               (update-geometry
                (fix-keys (get feature "properties"))
                (jts/map->geom (get feature "geometry")))))
-           
+
            "Feature"
            [(update-geometry
              (fix-keys (get obj "properties"))
@@ -212,7 +213,7 @@
            [(update-geometry
              {}
              (jts/map->geom obj))])
-       
+
        homogenise-keys
        (do-homogenise-keys)
 
@@ -226,13 +227,13 @@
         crs (or (try (.readCRS io filename)
                      (catch Exception e))
                 (decode-crs "EPSG:4326"))
-        
+
         feature-collection (.readFeatureCollection io filename)
 
         features  (doall (->> feature-collection
                               .features
                               feature-iterator-seq))
-        
+
         features (for [feature features
                        :when feature
                        :let [m (feature->map feature key-transform)]
@@ -250,6 +251,22 @@
                           "EPSG:4326")))
         ]
     {::features features ::crs crs-id}))
+
+
+(defn read-from-city-gml [reader]
+  (let [city-features (ThermosCityReader/readFrom reader)
+        conv (fn [^ThermosFeature city-feature]
+               (let [geometry (.polygon city-feature)]
+                 {::geometry geometry
+                  ::type (jts/geometry-type geometry)
+                  ::id (jts/ghash geometry)
+                  :identity (.identifier city-feature)
+                  :annual-demand (.annualDemand city-feature)
+                  :height (.height city-feature)
+                  :floor-area (.floorArea city-feature)}))]
+    {::crs "EPSG:4326"
+     ::features (map conv city-features)}))
+
 
 (defn read-from
   "Load some geospatial data into a format we like.
@@ -280,8 +297,8 @@
             (try
               (read-from-store store :force-crs force-crs :key-transform key-transform)
               (finally (.dispose store))))
-          
-          
+
+
           (or (has-extension filename "json")
               (has-extension filename "geojson"))
           (with-open [r (io/reader filename)]
@@ -290,12 +307,16 @@
                                  :key-transform key-transform
                                  :homogenise-keys true))
 
+          (has-extension filename "gml")
+          (with-open [r (io/reader filename)]
+            (read-from-city-gml r))
+
           :otherwise
           (throw (Exception. (str "Unable to read features from " filename))))
-      
+
       force-precision
       (set-precision force-precision)
-      
+
       remove-junk
       (update ::features
               (fn [features]
@@ -309,7 +330,7 @@
 
 (def can-read?
   (comp
-   #{"shp" "json" "geojson" "gpkg" "geopackage"}
+   #{"shp" "json" "geojson" "gpkg" "geopackage" "gml"}
    file-extension))
 
 (defn read-from-multiple [filenames &
@@ -331,19 +352,19 @@
                      (cond
                        (classes org.locationtech.jts.geom.Polygon)
                        "Polygon"
-        
+
                        (classes org.locationtech.jts.geom.Point)
                        "Point"
 
                        (classes org.locationtech.jts.geom.MultiPolygon)
                        "MultiPolygon"
-                       
+
                        (classes org.locationtech.jts.geom.MultiPoint)
                        "MultiPoint"
-                       
+
                        (classes org.locationtech.jts.geom.MultiLineString)
                        "MultiLineString"
-                       
+
                        (classes org.locationtech.jts.geom.GeometryCollection)
                        "GeometryCollection"
 
@@ -364,13 +385,13 @@
       ;; TODO this will fail for Longs
       (int? value)
       {:type "Integer"  :value get-value}
-      
+
       (double? value)
       {:type "Double"  :value get-value}
 
       (float? value)
       {:type "Float"  :value get-value}
-      
+
       (keyword? value)
       {:type "String" :value #(when-let [x (get-value %)] (str x))}
 
@@ -383,7 +404,7 @@
       (number? value)
       {:type "Double"  :value #(when-let [v (get-value %)]
                                  (double v))}
-      
+
       :otherwise
       (do (log/warn "no inferred field type for value of type" (type value))
           nil))))
@@ -435,10 +456,10 @@
                     :or   {table-name      "features"
                            geometry-column "geometry"}}]
   (let [filename (.getPath (io/file filename))
-        
+
         crs (::crs data)
         epsg (CRS/lookupEpsgCode (CRS/decode crs true) true)
-        
+
         data (::features data)
 
         fields (or fields (infer-fields epsg data))
@@ -470,7 +491,7 @@
                                 (when-let [id (or (::id datum) (:id datum))]
                                   (str id)))
                  ))))
-        
+
         write-chunk
         (cond
           (has-extension filename "gpkg")
@@ -484,8 +505,8 @@
                 (.setGeometryType feature-entry Geometries/GEOMETRY)
                 (.add out feature-entry (make-feature-collection data))
                 (finally (.close out)))))
-          
-          
+
+
           :default ;; geojson
           (fn [filename data]
             (with-open [writer (io/writer filename)]
